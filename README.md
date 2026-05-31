@@ -12,11 +12,12 @@ bounties go unpaid, popular issues are swarmed, honeypots target agents).
 python -m canary facebook/react
 # [ENGAGE]  (risk 0.05, confidence 0.85)
 
-python -m canary some-org/some-repo#42
+# a swarmed bounty looks like this (illustrative output; use a real owner/repo#issue):
+python -m canary <owner>/<repo>#<issue>
 # [AVOID]  (risk 0.97, confidence 1.00)
 #    • veto: contention — many open attempts, no payout yet (swarmed bounty)
 
-python -m canary --json some-org/some-repo#42   # machine-readable, for agents
+python -m canary --json <owner>/<repo>#<issue>   # machine-readable, for agents
 ```
 
 ## What it checks (risk dimensions, not one blended number)
@@ -32,8 +33,7 @@ python -m canary --json some-org/some-repo#42   # machine-readable, for agents
 ## The one rule that matters
 **Canary never says "go" on missing data.** If it can't gather enough signal, the
 verdict is `UNKNOWN`, not `ENGAGE`. Absence of evidence is not evidence of safety —
-a false green sends you into a trap. (This was the #1 lesson from validation; see
-`PROBE_RESULTS.md`.)
+a false green sends you into a trap. (The #1 lesson from validating the approach.)
 
 ## Use as an MCP server (for agents)
 Expose Canary as a tool an autonomous agent calls *before* engaging a repo/bounty:
@@ -54,9 +54,9 @@ IssueHunt, and non-bounty "should my agent touch this repo at all" are next).
 
 ## Status
 Early MVP. Signal set validated on a small labeled sample (promising, not proof —
-expanding the test set). Roadmap: harden Algora extraction · native contention
-fallback (linked PRs) · larger labeled benchmark · MCP server so agents can call
-Canary as a pre-engagement trust gate.
+expanding the test set). CLI and MCP server both work today. Roadmap: harden Algora
+extraction · native contention fallback via linked PRs · larger labeled benchmark ·
+more platform modules (Opire, IssueHunt).
 
 ## Install / run
 No third-party deps. Python 3.10+. `python -m canary <target>`.
