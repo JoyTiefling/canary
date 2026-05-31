@@ -1,0 +1,3 @@
+# Core scanning + CLI: standard library only (Python 3.10+). No install needed.
+# Optional — only for the MCP server transport (python -m canary.mcp_server):
+mcp>=1.0
