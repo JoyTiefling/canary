@@ -99,11 +99,24 @@ def parse_target(url):
     return None
 
 
+# Reference clock. None => wall-clock now(). The benchmark sets this to a fixture's
+# capture time so age-based signals (owner_age, push_recency, fast_growth...) replay
+# deterministically instead of drifting as repos age. Production leaves it None.
+_CLOCK = None
+
+
+def set_clock(dt):
+    """Freeze 'now' (tz-aware datetime) for age computations; pass None to restore."""
+    global _CLOCK
+    _CLOCK = dt
+
+
 def age_days(iso):
     if not iso:
         return None
     try:
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        return (datetime.now(timezone.utc) - dt).days
+        now = _CLOCK or datetime.now(timezone.utc)
+        return (now - dt).days
     except Exception:
         return None
