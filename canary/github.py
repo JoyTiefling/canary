@@ -1,6 +1,6 @@
 """Minimal GitHub REST client + target URL parsing. Unauth by default (60/hr);
 set GITHUB_TOKEN for higher limits. No third-party deps."""
-import os, json, time, re, urllib.request, urllib.error
+import os, json, time, re, urllib.request, urllib.error, urllib.parse
 from datetime import datetime, timezone
 
 _API = "https://api.github.com"
@@ -45,6 +45,18 @@ class GitHub:
     def issue(self, owner, name, num):
         d, _ = self._get(f"/repos/{owner}/{name}/issues/{num}")
         return d
+
+    def owner_open_bounties(self, owner):
+        """Count an owner's simultaneously-open bounty-labelled issues across all
+        their repos (dilution / farm proxy). One Search API call (separate, smaller
+        rate bucket). Returns int total_count, or None if unavailable. Counts the
+        literal `bounty` label only -- platforms using other label text are missed
+        (documented limitation, not silently treated as zero)."""
+        q = urllib.parse.quote(f"is:issue is:open label:bounty user:{owner}")
+        d, _ = self._get(f"/search/issues?q={q}&per_page=1")
+        if not isinstance(d, dict) or "total_count" not in d:
+            return None
+        return d["total_count"]
 
     def releases(self, owner, name):
         d, _ = self._get(f"/repos/{owner}/{name}/releases?per_page=1")

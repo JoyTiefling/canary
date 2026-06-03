@@ -52,6 +52,7 @@ def scan(url, gh=None):
                 S.sig_assigned_reserved(issue),
                 S.sig_contention(issue, comments),
                 S.sig_linked_prs(timeline),
+                S.sig_owner_bounty_flood(gh.owner_open_bounties(owner)),
             ]
 
     sigs.append(S.sig_honeypot(rd, issue))
