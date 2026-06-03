@@ -2,7 +2,8 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from canary.signals import SignalResult, parse_algora_attempts, sig_linked_prs
+from canary.signals import (SignalResult, parse_algora_attempts, sig_linked_prs,
+                            sig_owner_bounty_flood)
 from canary.score import aggregate
 from canary.github import parse_target
 
@@ -103,6 +104,32 @@ def test_mcp_to_dict_shapes_verdict():
     assert d["verdict"] == "AVOID" and d["engage"] is False and d["risk"] == 0.9, d
     assert _to_dict("o/r", Verdict("ENGAGE", 0.05, 0.9, [], []))["engage"] is True
     assert _to_dict("o/r", Verdict("UNKNOWN", None, 0.1, [], []))["engage"] is False
+
+
+def test_owner_flood_none_is_unavailable():
+    # no data must never be scored as safe (0)
+    assert sig_owner_bounty_flood(None).available is False
+
+
+def test_owner_flood_normal_is_low_risk():
+    r = sig_owner_bounty_flood(2)
+    assert r.available and r.dimension == "contention" and r.risk < 0.2, r
+
+
+def test_owner_flood_industrial_vetoes():
+    # 144 (real ritesh-1918 farm) must cross the contention veto -> AVOID
+    r = sig_owner_bounty_flood(144)
+    assert r.risk >= 0.8, r
+    v = aggregate([S("clean", "authenticity", 0.05, 1.0), r])
+    assert v.verdict == "AVOID", (v.verdict, v.risk)
+
+
+def test_owner_flood_heavy_downgrades_not_vetoes():
+    # heavy-but-plausible (20) blocks a clean go but does not hard-AVOID
+    r = sig_owner_bounty_flood(20)
+    assert 0.5 <= r.risk < 0.8, r
+    v = aggregate([S("auth", "authenticity", 0.05, 1.0), S("resp", "responsiveness", 0.05, 0.4), r])
+    assert v.verdict == "CAUTION", (v.verdict, v.risk)
 
 
 def test_parse_target_forms():

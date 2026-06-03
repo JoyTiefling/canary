@@ -162,6 +162,31 @@ def sig_linked_prs(timeline):
     return _ok("linked_prs", "contention", 0.05, 0.6, "no linked PRs")
 
 
+def sig_owner_bounty_flood(open_bounty_count):
+    """Owner-level dilution: one owner with many simultaneously-open bounties can't
+    realistically review/pay them all -- each issue is diluted and the pool reads as
+    a farm. This is contention the per-issue signals miss entirely (a fresh farm
+    issue has 0 attempts and 0 linked PRs, yet is still a trap). Calibrated safe-side
+    but not trigger-happy: heavy-but-plausible counts only downgrade a clean go to
+    CAUTION; industrial counts cross the contention veto. None => no data, excluded.
+
+    Threshold caveat: the legit/farm boundary in the 11-50 band is a judgement call
+    not yet calibrated against a known *legitimate* high-volume owner -- only the
+    extreme end (ritesh-1918, 144) is empirically anchored. See bench dataset."""
+    n = open_bounty_count
+    if n is None:
+        return _na("owner_bounty_flood", "contention", 0.4, "owner open-bounty count unavailable")
+    if n <= 3:
+        return _ok("owner_bounty_flood", "contention", 0.05, 0.5, f"owner has {n} open bounties (normal)")
+    if n <= 10:
+        return _ok("owner_bounty_flood", "contention", 0.3, 0.5, f"{n} open bounties from this owner (busy)")
+    if n <= 25:
+        return _ok("owner_bounty_flood", "contention", 0.55, 0.5, f"{n} open bounties from this owner (heavy dilution)")
+    if n <= 50:
+        return _ok("owner_bounty_flood", "contention", 0.75, 0.5, f"{n} open bounties from this owner (farm-scale dilution)")
+    return _ok("owner_bounty_flood", "contention", 0.92, 0.5, f"{n} open bounties from this owner (industrial bounty farm)")
+
+
 def sig_contention(issue, comments):
     attempts, found = parse_algora_attempts(comments)
     if found:

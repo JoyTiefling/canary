@@ -51,6 +51,9 @@ class Cassette:
             return val
         return self.store.get(key)
 
+    def owner_open_bounties(self, owner):
+        return self._io(f"ownerflood:{owner}", lambda: self.real.owner_open_bounties(owner))
+
     def remaining(self):
         return self._io("remaining", lambda: self.real.remaining())
 
