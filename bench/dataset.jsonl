@@ -1,0 +1,8 @@
+{"target": "facebook/react", "expected": "ENGAGE", "trap_type": "legit-huge", "source": "PROBE_RESULTS probe1", "notes": "established org, releases, active; repo-authenticity baseline"}
+{"target": "vercel/next.js", "expected": "ENGAGE", "trap_type": "legit-huge", "source": "PROBE_RESULTS probe1", "notes": "established org, releases, active"}
+{"target": "tscircuit/tscircuit", "expected": "ENGAGE", "trap_type": "legit", "source": "PROBE_RESULTS probe1 (score 70)", "notes": "legit repo; repo-level only, no bounty contention here"}
+{"target": "highlight/highlight", "expected": "ENGAGE", "trap_type": "legit", "source": "PROBE_RESULTS probe1 (score 79)", "notes": "legit repo at repo level"}
+{"target": "arakoodev/EdgeChains", "expected": "ENGAGE", "trap_type": "legit", "source": "PROBE_RESULTS probe1 (score 97)", "notes": "legit repo at repo level"}
+{"target": "tscircuit/tscircuit#328", "expected": "AVOID", "trap_type": "bounty-swarm", "source": "PROBE_RESULTS probe2 (22 Algora attempts)", "notes": "high attempt-density bounty -> contention veto"}
+{"target": "highlight/highlight#8614", "expected": "AVOID", "trap_type": "bounty-swarm", "source": "PROBE_RESULTS probe2 (40 Algora attempts)", "notes": "high attempt-density bounty -> contention veto"}
+{"target": "arakoodev/EdgeChains#286", "expected": "AVOID", "trap_type": "dead-assigned-bounty", "source": "PROBE_RESULTS probe2 (false-green bug)", "notes": "2.5y-old ASSIGNED bounty w/ solution PR #515; the original false-green case. Ground truth: do not engage. Tests both the assigned-availability veto and the absent-Algora-table -> never-green rule."}
