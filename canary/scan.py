@@ -1,7 +1,7 @@
 """Orchestration: fetch data for a target and build the signal set, then aggregate.
 Network lives here; signal math stays pure in signals.py."""
 from . import signals as S
-from .github import GitHub, parse_target
+from .github import GitHub, parse_target, age_days
 from .score import aggregate, Verdict
 
 
@@ -28,9 +28,16 @@ def scan(url, gh=None):
 
     sigs = []
     owner_user = gh.user((rd.get("owner") or {}).get("login")) if rd.get("owner") else None
+    # Fetch trajectory only when it can actually change the verdict band:
+    # <30d bootstrap floor and ≥365d established are inert to events.
+    owner_events = None
+    if owner_user:
+        owner_age = age_days(owner_user.get("created_at"))
+        if owner_age is not None and 30 <= owner_age < 365:
+            owner_events = gh.events(owner_user.get("login"))
     releases = gh.releases(owner, repo)
     sigs += [
-        S.sig_owner_age(owner_user),
+        S.sig_owner_age(owner_user, owner_events),
         S.sig_releases(rd, releases),
         S.sig_fast_growth(rd),
         S.sig_fake_star(rd),

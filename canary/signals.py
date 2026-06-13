@@ -28,16 +28,54 @@ def _na(name, dim, weight, detail):
 
 # ---------- repo-level (universal, any GitHub repo) ----------
 
-def sig_owner_age(owner_user):
+def _trajectory(events):
+    """(total_push_commits, distinct_push_days) from a user's public events.
+    Empty / None / no PushEvents -> (0, 0). Date bucket = YYYY-MM-DD of
+    `created_at`. Pure (caller fetches; we don't network here)."""
+    if not events:
+        return 0, 0
+    days, total = set(), 0
+    for ev in events:
+        if ev.get("type") != "PushEvent":
+            continue
+        when = (ev.get("created_at") or "")[:10]
+        if not when:
+            continue
+        days.add(when)
+        total += len((ev.get("payload") or {}).get("commits") or [])
+    return total, len(days)
+
+
+def sig_owner_age(owner_user, events=None):
+    """Owner account age with optional trajectory adjustment (DESIGN.md §7 / ROADMAP).
+    The default suspicion on a new owner is correct for a blind agent — but a legit
+    young owner should be able to *earn* trust via observable work (push trajectory).
+    `events` is the unauth public events list (see GitHub.events); when present and
+    the owner shows a real push trajectory, the risk band eases — without granting
+    exceptions to brand-new accounts (the <30d bootstrap floor is non-negotiable)."""
     if not owner_user:
         return _na("owner_age", "authenticity", 0.6, "owner profile unavailable")
     a = age_days(owner_user.get("created_at"))
     if a is None:
         return _na("owner_age", "authenticity", 0.6, "no owner created_at")
+    if a < 30:
+        # Bootstrap floor: too new for trajectory to compensate. Pay the days tax.
+        return _ok("owner_age", "authenticity", 0.8, 0.6,
+                   f"owner account very new ({a}d, bootstrap floor)")
     if a < 120:
-        return _ok("owner_age", "authenticity", 0.8, 0.6, f"owner account very new ({a}d)")
+        commits, days = _trajectory(events)
+        if commits >= 20 and days >= 14:
+            return _ok("owner_age", "authenticity", 0.45, 0.6,
+                       f"owner new ({a}d) but active ({commits}c/{days}d trajectory)")
+        return _ok("owner_age", "authenticity", 0.8, 0.6,
+                   f"owner account very new ({a}d, weak/no trajectory)")
     if a < 365:
-        return _ok("owner_age", "authenticity", 0.4, 0.6, f"owner account young ({a}d)")
+        commits, days = _trajectory(events)
+        if commits >= 10 and days >= 7:
+            return _ok("owner_age", "authenticity", 0.15, 0.6,
+                       f"owner young ({a}d) but active ({commits}c/{days}d trajectory)")
+        return _ok("owner_age", "authenticity", 0.4, 0.6,
+                   f"owner account young ({a}d, weak/no trajectory)")
     return _ok("owner_age", "authenticity", 0.05, 0.6, f"owner established ({a}d)")
 
 
