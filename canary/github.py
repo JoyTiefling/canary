@@ -42,6 +42,15 @@ class GitHub:
         d, _ = self._get(f"/users/{login}")
         return d
 
+    def events(self, login, per_page=100):
+        """Public events for a user (unauthed). GitHub returns up to ~300 events /
+        ~90 days. Used by sig_owner_age to detect organic trajectory on a young
+        owner (so a legit-new author isn't indistinguishable from a new-scam
+        purely on account age). One extra API call; callers should skip it for
+        established owners where age IS the trajectory."""
+        d, _ = self._get(f"/users/{login}/events/public?per_page={per_page}")
+        return d if isinstance(d, list) else []
+
     def issue(self, owner, name, num):
         d, _ = self._get(f"/repos/{owner}/{name}/issues/{num}")
         return d
