@@ -112,6 +112,36 @@ def sig_fake_star(repo):
     return _ok("fake_star", "authenticity", 0.05, 0.3, f"fork:star={ratio:.3f} healthy")
 
 
+def sig_fork_swarm(repo):
+    """Contention lens on fork:star — same datum as sig_fake_star, different question.
+    fake_star asks 'is the social proof manufactured?' (low ratio at scale).
+    fork_swarm asks 'is this small bounty repo being swarmed by hunters?' (high ratio
+    at small scale). Soft contention signal — caps at 0.55 (single-block downgrade,
+    no hard veto): a swarmed fork:star is a probability tilt, not proof of contention
+    (forks may include legit contributors). Pairs with sig_linked_prs / sig_contention
+    which read the *issue-level* fight; this reads the *repo-level* swarm.
+
+    Anchor: HELPDESK.AI 149f/90★ — caught blind 2026-06-01 (Engram #2470 dogfood). Old
+    fake_star punted ('too few stars to judge'); the swarm read sees the contention."""
+    stars = repo.get("stargazers_count", 0)
+    forks = repo.get("forks_count", 0)
+    if stars + forks < 20:
+        return _na("fork_swarm", "contention", 0.4, "repo too small to read swarm signal")
+    if stars == 0:
+        # All-forks-no-stars is odd but ambiguous (vendored mirrors, template repos);
+        # let other contention signals decide, don't single-handedly punish.
+        return _na("fork_swarm", "contention", 0.4, "no stars baseline for swarm ratio")
+    ratio = forks / stars
+    if stars < 200 and ratio >= 1.5:
+        return _ok("fork_swarm", "contention", 0.55, 0.4,
+                   f"{forks} forks / {stars}★ on a small repo — hunter swarm")
+    if stars < 500 and ratio >= 1.0:
+        return _ok("fork_swarm", "contention", 0.3, 0.4,
+                   f"{forks} forks / {stars}★ — heavy contention for repo size")
+    return _ok("fork_swarm", "contention", 0.05, 0.4,
+               f"fork:star={ratio:.2f}, healthy for scale ({stars}★)")
+
+
 def sig_push_recency(repo):
     p = age_days(repo.get("pushed_at"))
     if p is None:

@@ -41,6 +41,7 @@ def scan(url, gh=None):
         S.sig_releases(rd, releases),
         S.sig_fast_growth(rd),
         S.sig_fake_star(rd),
+        S.sig_fork_swarm(rd),
         S.sig_push_recency(rd),
     ]
 
