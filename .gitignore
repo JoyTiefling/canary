@@ -6,3 +6,6 @@ venv/
 .env
 .pytest_cache/
 .DS_Store
+
+# Agent config / memory — private (see DESIGN.md §Anonymity, P-32).
+.claude/
