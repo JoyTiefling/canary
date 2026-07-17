@@ -13,4 +13,4 @@ Design principles (validated empirically):
   4. Reuse prior art for solved sub-signals (fake-star: Dagster/StarScout) — don't
      reinvent. Differentiation lives in the decision layer + bounty economics.
 """
-__version__ = "0.0.1"
+__version__ = "0.1.0"

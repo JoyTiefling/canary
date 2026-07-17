@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "canary-trust"
+dynamic = ["version"]
+description = "Trust verdict for a GitHub repo or bounty before you (or your agent) engage"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "JoyTiefling" }]
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "github",
+    "bounty",
+    "trust",
+    "trust-score",
+    "reputation",
+    "agent",
+    "ai-agent",
+    "autonomous-agents",
+    "open-source",
+    "supply-chain",
+    "code-review",
+    "scam-detection",
+    "honeypot",
+    "algora",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+# The scanner core + CLI are pure standard library (the `canary` package imports
+# nothing third-party — auditable, vendorable). The distribution ships the MCP SDK
+# because the registry listing's entry point IS the MCP server, and `uvx canary-trust`
+# must resolve its transport with no extra flags.
+dependencies = ["mcp>=1.0"]
+
+[project.scripts]
+# Human-facing CLI: `canary <owner/repo[#issue]>`.
+canary = "canary.cli:main"
+# MCP stdio server entry point. `uvx canary-trust` launches it (registry convention:
+# the console script name matches the PyPI distribution / MCP identifier).
+canary-trust = "canary.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/JoyTiefling/canary"
+Repository = "https://github.com/JoyTiefling/canary"
+Issues = "https://github.com/JoyTiefling/canary/issues"
+
+[tool.hatch.version]
+path = "canary/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["canary"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/canary", "/README.md", "/LICENSE"]

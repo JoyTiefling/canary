@@ -1,66 +1,132 @@
 # 🐤 Canary
 
-**Should I — or my agent — engage with this repo/bounty, or is it a trap?**
+**Should I — or my agent — engage with this repo or bounty, or is it a trap?**
 
-Canary gives a fast trust verdict (`ENGAGE` / `CAUTION` / `AVOID` / `UNKNOWN`) for a
-GitHub repository or bounty *before* you sink hours (or tokens) into it. It's built
-for the open-source contributor and for the autonomous coding agent that now picks
-its own work — neither of whom can trust surface signals anymore (stars are faked,
-bounties go unpaid, popular issues are swarmed, honeypots target agents).
+<!-- mcp-name: io.github.JoyTiefling/canary -->
+
+Canary gives a fast trust verdict — `ENGAGE` / `CAUTION` / `AVOID` / `UNKNOWN` — for a
+GitHub repository or bounty *before* you sink hours (or tokens) into it.
+
+## The problem it solves
+
+Surface trust signals are gameable and now routinely AI-faked. Stars are bought,
+bounties go unpaid, popular issues are silently swarmed by a dozen contenders, and a new
+class of "honeypot" issues is built specifically to lure autonomous coding agents into
+dead-end work. There's no shortage of *security* scanners (CVEs, malware, best-practice
+scorecards) — but none of them answer the **decision** an individual contributor or an
+agent actually faces at the moment of engagement:
+
+> *Is this specific repo/bounty worth my effort, or am I about to walk into a scam,
+> a swarm, a non-payer, or a trap?*
+
+Canary is that pre-engagement trust layer. It's built for the open-source contributor
+and, especially, for the autonomous coding agent that now picks its own work and can't
+tell a real bounty from bait.
+
+## The verdicts
+
+| Verdict     | Meaning                                                                             |
+| ----------- | ----------------------------------------------------------------------------------- |
+| **ENGAGE**  | Signals clean and sufficient — safe to proceed.                                     |
+| **CAUTION** | Proceed only with scrutiny; an elevated risk or a single hot signal. Don't automate past it. |
+| **AVOID**   | A hard red flag (honeypot, swarmed bounty, already-taken) or overall high risk. Don't engage. |
+| **UNKNOWN** | Not enough data to judge. Treated as *not cleared* — **never** as safe.             |
+
+## The one rule that matters
+
+**Canary never says "go" on missing data.** If it can't gather enough signal, the
+verdict is `UNKNOWN`, not `ENGAGE`. Absence of evidence is not evidence of safety — a
+false green is what sends you into the trap. This rule is enforced on every code path,
+not patched in one place. (It's the hardest-won lesson from building the tool.)
+
+## What it checks (separate risk dimensions, not one blended number)
+
+The worst dimension can veto a verdict — a single real red flag must not be averaged
+away by many benign signals.
+
+- **authenticity** — owner account age (with a push-trajectory adjustment so a legit
+  young owner can *earn* trust), releases vs. repo age, fast-growth anomalies, and a
+  fork:star fake-star proxy (the Dagster/StarScout heuristic — reused, not reinvented).
+- **responsiveness** — is the maintainer actually alive (recent pushes)?
+- **honeypot** — agent-bait labels ("Autonomous Agents Only", "crypto-eligible",
+  "AI agent friendly") combined with bot / throwaway authors.
+- **availability** — already assigned, or reserved (e.g. hiring-only) bounties.
+- **contention** — how swarmed is this bounty? Algora `/attempt` density, open linked
+  PRs on the issue, and owner-level bounty-flood (one owner farming many bounties at once).
+
+## Install & run (CLI)
+
+Requires Python 3.10+.
 
 ```bash
+# from source, zero install — the scanner core is pure standard library:
 python -m canary facebook/react
 # [ENGAGE]  (risk 0.05, confidence 0.85)
 
-# a swarmed bounty looks like this (illustrative output; use a real owner/repo#issue):
-python -m canary <owner>/<repo>#<issue>
-# [AVOID]  (risk 0.97, confidence 1.00)
-#    • veto: contention — many open attempts, no payout yet (swarmed bounty)
-
-python -m canary --json <owner>/<repo>#<issue>   # machine-readable, for agents
+# or install from PyPI:
+pip install canary-trust
+canary facebook/react
 ```
 
-## What it checks (risk dimensions, not one blended number)
-- **authenticity** — fake-star proxy (fork:star), fast-growth anomalies, releases,
-  owner account age. *(Reuses the Dagster/StarScout fork:star heuristic — not reinvented.)*
-- **responsiveness** — is the maintainer actually alive (recent pushes)?
-- **honeypot** — agent-bait labels ("Autonomous Agents Only", "crypto-eligible") +
-  bot/throwaway authors.
-- **availability** — already assigned, or reserved (e.g. hiring-only) bounties.
-- **contention** — how swarmed is this bounty? (Algora `/attempt` density today;
-  generalizing to native open-PR/claimant counts on any issue.)
-
-## The one rule that matters
-**Canary never says "go" on missing data.** If it can't gather enough signal, the
-verdict is `UNKNOWN`, not `ENGAGE`. Absence of evidence is not evidence of safety —
-a false green sends you into a trap. (The #1 lesson from validating the approach.)
-
-## Use as an MCP server (for agents)
-Expose Canary as a tool an autonomous agent calls *before* engaging a repo/bounty:
+Check a specific bounty/issue, and get machine-readable output for an agent:
 
 ```bash
-pip install mcp           # only needed for the server transport
-python -m canary.mcp_server   # stdio
+canary owner/repo#123          # bounty/issue-level check (adds contention signals)
+canary --json owner/repo#123   # JSON for programmatic use
 ```
-Tool: `canary_check(target, verbose=False)` → `{verdict, engage, risk, confidence, reasons}`.
-`engage` is the go/no-go boolean; `UNKNOWN` means "not cleared", never treat as safe.
-This is the point of Canary: a pre-engagement trust gate for the autonomous agents
-that now pick their own work and can't tell a real bounty from a swarm or a honeypot.
+
+Exit codes: `0` ENGAGE · `1` CAUTION · `2` AVOID · `3` UNKNOWN/error.
+Set `GITHUB_TOKEN` to raise the GitHub API rate limit.
+
+## Use as an MCP server (for agents)
+
+Expose Canary as a tool an autonomous agent calls *before* engaging a repo or bounty.
+Add it to your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "canary": {
+      "command": "uvx",
+      "args": ["canary-trust"]
+    }
+  }
+}
+```
+
+Or run the stdio server directly:
+
+```bash
+uvx canary-trust                 # installed from PyPI
+python -m canary.mcp_server      # from source
+```
+
+**Tool:** `canary_check(target, verbose=False)` →
+`{ verdict, engage, risk, confidence, reasons }`.
+`engage` is a plain go/no-go boolean, `True` only on `ENGAGE`. `UNKNOWN` means
+"not cleared" — an agent must never treat it as safe.
 
 ## Architecture
+
 Platform-agnostic core (universal GitHub signals) + pluggable context modules.
-**Algora** is the first bounty module; the design is not bound to it (Opire,
-IssueHunt, and non-bounty "should my agent touch this repo at all" are next).
+**Algora** is the first bounty module; the design is not bound to it (Opire, IssueHunt,
+and non-bounty "should my agent touch this repo at all" are the intended next modules).
+The scanner core imports nothing outside the standard library, so it's easy to audit
+and vendor; only the MCP server transport pulls in the `mcp` SDK.
 
-## Status
-Early MVP. Signal set validated on a small labeled sample (promising, not proof —
-expanding the test set). CLI and MCP server both work today. Roadmap: harden Algora
-extraction · native contention fallback via linked PRs · larger labeled benchmark ·
-more platform modules (Opire, IssueHunt).
+## Status & honest limitations
 
-## Install / run
-No third-party deps. Python 3.10+. `python -m canary <target>`.
-Set `GITHUB_TOKEN` to raise the API rate limit.
+Early MVP — the CLI and MCP server both work today.
 
----
-*Built by JoyTiefling. Contributions and skepticism welcome.*
+- The signal set is validated on a **small labeled sample**: promising, not proof. The
+  labeled benchmark is still being grown across all verdict classes.
+- Contention outside Algora relies on linked-PR / bounty-flood proxies; other bounty
+  platforms' label formats aren't parsed yet (missing data → UNKNOWN, never a false green).
+- Some calibration boundaries (e.g. the legit-vs-farm bounty-flood band) are judgement
+  calls not yet anchored against a known-legitimate high-volume owner.
+
+If you hit a case Canary gets wrong, that's the most useful thing you can report.
+
+## License
+
+MIT © 2026 JoyTiefling. Contributions and skepticism welcome.

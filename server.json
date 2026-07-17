@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.JoyTiefling/canary",
+  "title": "Canary",
+  "description": "Trust verdict for a GitHub repo or bounty before you (or your agent) engage",
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/JoyTiefling/canary",
+  "repository": {
+    "url": "https://github.com/JoyTiefling/canary",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "canary-trust",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

@@ -135,16 +135,20 @@ def test_owner_flood_heavy_downgrades_not_vetoes():
     assert v.verdict == "CAUTION", (v.verdict, v.risk)
 
 
-# ---------- fork_swarm (contention lens on fork:star) ----------
+# ---------- fork_swarm (repo-level swarm lens on fork:star) ----------
+# Dimension is 'swarm', deliberately NOT 'contention': fork_swarm reads the
+# repo-level population, not the issue-level fight. Tagging it 'contention'
+# used to satisfy the issue-target required-dim gate on repo data alone and
+# false-green an issue with no issue data (regression fixed 2026-07-02).
 
 def test_fork_swarm_tiny_repo_unavailable():
     # stars + forks under 20 — too small to read swarm signal
     r = sig_fork_swarm({"stargazers_count": 3, "forks_count": 1})
-    assert r.available is False and r.dimension == "contention", r
+    assert r.available is False and r.dimension == "swarm", r
 
 
 def test_fork_swarm_no_stars_unavailable():
-    # all-forks-no-stars is ambiguous, let other contention signals decide
+    # all-forks-no-stars is ambiguous, let issue-level contention signals decide
     r = sig_fork_swarm({"stargazers_count": 0, "forks_count": 25})
     assert r.available is False, r
 
@@ -154,14 +158,14 @@ def test_fork_swarm_helpdesk_anchor_triggers_clear():
     # Must hit the 0.55 "hunter swarm" tier and downgrade a clean ENGAGE to CAUTION
     # via the single-signal-block rule in score.py.
     r = sig_fork_swarm({"stargazers_count": 90, "forks_count": 149})
-    assert r.available and r.dimension == "contention" and r.risk == 0.55, r
+    assert r.available and r.dimension == "swarm" and r.risk == 0.55, r
     v = aggregate([S("auth", "authenticity", 0.05, 1.0),
                    S("resp", "responsiveness", 0.05, 0.4), r])
     assert v.verdict == "CAUTION", (v.verdict, v.risk)
 
 
-def test_fork_swarm_medium_repo_heavy_contention_tier():
-    # 300★ / 350f — ratio 1.17, stars<500: heavy contention tier (0.3), not single-block
+def test_fork_swarm_medium_repo_heavy_tier():
+    # 300★ / 350f — ratio 1.17, stars<500: heavy swarm tier (0.3), not single-block
     r = sig_fork_swarm({"stargazers_count": 300, "forks_count": 350})
     assert r.available and 0.25 <= r.risk < 0.55, r
 
@@ -177,6 +181,16 @@ def test_fork_swarm_not_a_hard_veto():
     # It's a soft probability tilt — proof of contention still belongs to issue-level signals.
     r = sig_fork_swarm({"stargazers_count": 90, "forks_count": 149})
     assert r.risk < 0.8, "fork_swarm must stay soft — not hard veto"
+
+
+def test_fork_swarm_does_not_satisfy_issue_contention_gate():
+    # Regression sibling of bench test_missing_key_replays_as_no_data_not_crash.
+    # A repo-level swarm signal must NOT satisfy the issue-target required=('contention',)
+    # gate — otherwise an issue with no fetched issue data false-greens on repo swarm alone.
+    swarm = sig_fork_swarm({"stargazers_count": 200000, "forks_count": 35000})  # available, clean
+    v = aggregate([S("auth", "authenticity", 0.05, 1.0), swarm],
+                  required_dims=("contention",))
+    assert v.verdict == "UNKNOWN", (v.verdict, v.reasons)
 
 
 # ---------- owner_age + trajectory (DESIGN.md §7 / cold-start) ----------
