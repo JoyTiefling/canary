@@ -19,6 +19,15 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Windows console defaults to cp1251; reason-strings use `★` (see signals.py).
+# Reconfigure to UTF-8 so `python -m bench.run -v` doesn't crash on print().
+# Safe on POSIX (already UTF-8) and no-op if stdout has no reconfigure (piped/redirected).
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from canary import github
 from canary.scan import scan
 from bench.cassette import Cassette, load_cassette, captured_dt, fixture_path, slug_for
