@@ -3,34 +3,105 @@
 endpoint: a pre-engagement gate so an agent doesn't walk into a trap/dead-end/swarm.
 
 Run:  python -m canary.mcp_server      (stdio transport)
-Needs the `mcp` SDK (FastMCP). Core scanning has no third-party deps; only the
-server transport does.
+Needs the `mcp` SDK (FastMCP) ≥ 1.10 (for structured tool output). Core scanning
+has no third-party deps; only the server transport does.
 """
-from typing import Annotated
-from pydantic import Field
+from typing import Annotated, Literal, Optional
+from pydantic import BaseModel, Field
 from mcp.server.fastmcp import FastMCP
 from .scan import scan
 from .score import Verdict
 
 mcp = FastMCP("canary")
 
+VerdictLiteral = Literal["ENGAGE", "CAUTION", "AVOID", "UNKNOWN"]
 
-def _to_dict(target, v: Verdict, verbose=False):
-    d = {
-        "target": target,
-        "verdict": v.verdict,                 # ENGAGE | CAUTION | AVOID | UNKNOWN
-        "engage": v.verdict == "ENGAGE",       # go/no-go gate for an agent
-        "risk": round(v.risk, 3) if v.risk is not None else None,
-        "confidence": round(v.confidence, 3),
-        "reasons": v.reasons,
-    }
-    if verbose:
-        d["signals"] = [
-            {"name": s.name, "dimension": s.dimension, "available": s.available,
-             "risk": s.risk, "weight": s.weight, "detail": s.detail}
+
+class SignalOutput(BaseModel):
+    """One evidence signal contributing to the verdict.
+
+    Emitted only when the caller requests verbose=True; otherwise the compact
+    verdict fields are enough for an agent's go/no-go decision.
+    """
+    name: str = Field(description="Signal identifier, e.g. 'sig_owner_bounty_flood'.")
+    dimension: str = Field(
+        description=(
+            "Risk dimension the signal contributes to: "
+            "authenticity, responsiveness, honeypot, contention, availability, swarm."
+        ),
+    )
+    available: bool = Field(
+        description="Whether the underlying data was fetched. Unavailable signals are excluded from scoring — never treated as safe.",
+    )
+    risk: Optional[float] = Field(
+        default=None,
+        description="Signal risk 0..1 (higher = more reason to AVOID). Null when available=False.",
+    )
+    weight: float = Field(description="Weight of this signal in the overall aggregate.")
+    detail: str = Field(description="Human-readable explanation of what the signal saw.")
+
+
+class VerdictOutput(BaseModel):
+    """Trust verdict for a GitHub repository or bounty issue.
+
+    Cardinal rule: never `ENGAGE` on missing data. Absence of evidence is not
+    evidence of safety — gaps resolve to `UNKNOWN`, not a false green.
+    """
+    target: str = Field(description="The input target echoed back (URL or owner/repo[#issue]).")
+    verdict: VerdictLiteral = Field(
+        description=(
+            "Overall trust verdict:\n"
+            "  ENGAGE  — clean, sufficient signal; safe to proceed.\n"
+            "  CAUTION — proceed only with scrutiny; do not automate past it.\n"
+            "  AVOID   — hard red flag (honeypot, swarm, reserved, high risk band).\n"
+            "  UNKNOWN — not enough data or a required dimension missing. Treat as NOT cleared, never safe."
+        ),
+    )
+    engage: bool = Field(
+        description="Direct go/no-go gate. True only when verdict == 'ENGAGE'.",
+    )
+    risk: Optional[float] = Field(
+        default=None,
+        description="Overall weighted risk 0..1 across available signals (higher = more reason to avoid). Null if nothing could be scored.",
+    )
+    confidence: float = Field(
+        description="Share of total signal weight that had data behind it, 0..1.",
+    )
+    reasons: list[str] = Field(
+        default_factory=list,
+        description="Human-readable drivers of the verdict: vetoes, top risks, blind spots.",
+    )
+    signals: Optional[list[SignalOutput]] = Field(
+        default=None,
+        description="Full per-signal breakdown. Populated only when the tool was called with verbose=True; otherwise null.",
+    )
+
+
+def _to_verdict_output(target: str, v: Verdict, verbose: bool = False) -> VerdictOutput:
+    """Convert an internal Verdict into the tool's typed output shape.
+
+    Kept as a standalone helper (not inlined into the tool) so unit tests can
+    exercise the shaping without spinning up the MCP transport.
+    """
+    return VerdictOutput(
+        target=target,
+        verdict=v.verdict,
+        engage=v.verdict == "ENGAGE",
+        risk=round(v.risk, 3) if v.risk is not None else None,
+        confidence=round(v.confidence, 3),
+        reasons=list(v.reasons),
+        signals=[
+            SignalOutput(
+                name=s.name,
+                dimension=s.dimension,
+                available=s.available,
+                risk=s.risk,
+                weight=s.weight,
+                detail=s.detail,
+            )
             for s in v.signals
-        ]
-    return d
+        ] if verbose else None,
+    )
 
 
 @mcp.tool()
@@ -59,7 +130,7 @@ def canary_check(
             ),
         ),
     ] = False,
-) -> dict:
+) -> VerdictOutput:
     """Decide whether to engage a GitHub repo or bounty BEFORE spending effort or tokens.
 
     Call this as a pre-engagement gate: before attempting a bounty, cloning, depending
@@ -81,23 +152,25 @@ def canary_check(
     Cardinal rule: the tool never returns ENGAGE on missing data. Absence of evidence is
     not evidence of safety, so gaps resolve to UNKNOWN, not a false green.
 
-    Returns a dict:
-        target:     the input, echoed back.
-        verdict:    "ENGAGE" | "CAUTION" | "AVOID" | "UNKNOWN" (see above).
-        engage:     bool — True only when verdict == "ENGAGE". Your direct go/no-go gate.
-        risk:       float 0..1 overall weighted risk (higher = more reason to avoid), or
-                    null when nothing could be scored.
-        confidence: float 0..1 — share of signal weight that had data behind it.
-        reasons:    list[str] — human-readable drivers (vetoes, top risks, blind spots).
-        signals:    (only when verbose=True) the full per-signal breakdown.
+    Returns a typed `VerdictOutput` (see fields on that model). The SDK emits the
+    structured object as `structuredContent` on the tool result and advertises the
+    schema via `outputSchema`, so callers who want the object can consume it directly
+    rather than parsing the text form.
 
     Tip: set GITHUB_TOKEN in the server environment to raise the GitHub API rate limit.
     """
     v, err = scan(target)
     if err:
-        return {"target": target, "verdict": "UNKNOWN", "engage": False,
-                "risk": None, "confidence": 0.0, "reasons": [f"error: {err}"]}
-    return _to_dict(target, v, verbose)
+        return VerdictOutput(
+            target=target,
+            verdict="UNKNOWN",
+            engage=False,
+            risk=None,
+            confidence=0.0,
+            reasons=[f"error: {err}"],
+            signals=None,
+        )
+    return _to_verdict_output(target, v, verbose)
 
 
 def main():

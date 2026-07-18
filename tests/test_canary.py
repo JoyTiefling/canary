@@ -100,13 +100,42 @@ def test_parse_algora_absent():
     assert not found and n == 0
 
 
-def test_mcp_to_dict_shapes_verdict():
-    from canary.mcp_server import _to_dict
+def test_mcp_to_verdict_output_shapes_verdict():
+    from canary.mcp_server import _to_verdict_output, VerdictOutput
     from canary.score import Verdict
-    d = _to_dict("o/r#1", Verdict("AVOID", 0.9, 1.0, ["swarmed"], []))
-    assert d["verdict"] == "AVOID" and d["engage"] is False and d["risk"] == 0.9, d
-    assert _to_dict("o/r", Verdict("ENGAGE", 0.05, 0.9, [], []))["engage"] is True
-    assert _to_dict("o/r", Verdict("UNKNOWN", None, 0.1, [], []))["engage"] is False
+    o = _to_verdict_output("o/r#1", Verdict("AVOID", 0.9, 1.0, ["swarmed"], []))
+    assert isinstance(o, VerdictOutput)
+    assert o.verdict == "AVOID" and o.engage is False and o.risk == 0.9, o
+    assert _to_verdict_output("o/r", Verdict("ENGAGE", 0.05, 0.9, [], [])).engage is True
+    assert _to_verdict_output("o/r", Verdict("UNKNOWN", None, 0.1, [], [])).engage is False
+    # signals absent by default (compact go/no-go form)
+    assert _to_verdict_output("o/r", Verdict("ENGAGE", 0.05, 0.9, [], [])).signals is None
+
+
+def test_mcp_verdict_output_verbose_populates_signals():
+    from canary.mcp_server import _to_verdict_output, SignalOutput
+    from canary.score import Verdict
+    from canary.signals import SignalResult
+    sig = SignalResult("s1", "authenticity", True, 0.7, 1.0, "detail")
+    o = _to_verdict_output("o/r", Verdict("CAUTION", 0.4, 0.8, [], [sig]), verbose=True)
+    assert o.signals is not None and len(o.signals) == 1
+    assert isinstance(o.signals[0], SignalOutput)
+    assert o.signals[0].name == "s1" and o.signals[0].risk == 0.7
+
+
+def test_mcp_tool_advertises_output_schema():
+    # Structured output: FastMCP must derive an outputSchema from the tool's
+    # return type annotation (VerdictOutput). Without it, clients only ever
+    # see the text form and lose the typed shape.
+    from canary.mcp_server import mcp
+    import asyncio
+    tools = asyncio.run(mcp.list_tools())
+    t = next((t for t in tools if t.name == "canary_check"), None)
+    assert t is not None, "canary_check tool not registered"
+    assert t.outputSchema is not None, "canary_check must advertise outputSchema"
+    props = t.outputSchema.get("properties", {})
+    for field in ("target", "verdict", "engage", "risk", "confidence", "reasons", "signals"):
+        assert field in props, f"outputSchema missing field: {field}"
 
 
 def test_owner_flood_none_is_unavailable():

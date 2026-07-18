@@ -48,7 +48,7 @@ classifiers = [
 # nothing third-party — auditable, vendorable). The distribution ships the MCP SDK
 # because the registry listing's entry point IS the MCP server, and `uvx canary-trust`
 # must resolve its transport with no extra flags.
-dependencies = ["mcp>=1.0"]
+dependencies = ["mcp>=1.10"]
 
 [project.scripts]
 # Human-facing CLI: `canary <owner/repo[#issue]>`.
