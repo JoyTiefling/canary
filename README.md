@@ -78,6 +78,41 @@ canary --json owner/repo#123   # JSON for programmatic use
 Exit codes: `0` ENGAGE · `1` CAUTION · `2` AVOID · `3` UNKNOWN/error.
 Set `GITHUB_TOKEN` to raise the GitHub API rate limit.
 
+## Verdicts in the wild
+
+Illustrative outputs from the reproducible benchmark (`bench/dataset.jsonl`) —
+same fixtures, same clock, same verdicts, forever. Reasons are the real ones the
+scorer produced, not marketing copy.
+
+```
+$ canary tscircuit/tscircuit#328
+[AVOID]  (risk 0.85, confidence 0.95)
+  - veto: assigned_reserved (availability) — already assigned to seveibar
+  - contention: 22 Algora attempts (risk 0.97)
+  - contention: 6 open linked PRs — swarmed (risk 0.90)
+
+$ canary ritesh-1918/HELPDESK.AI#1411
+[AVOID]  (risk 0.92, confidence 0.90)
+  - veto: owner_bounty_flood — 144 open bounties from this owner (farm)
+  - contention: 2 open linked PRs
+
+$ canary JoyTiefling/canary
+[CAUTION]  (risk ~0.32, confidence moderate)
+  - authenticity/owner_age: owner <30d, cold-start band — trajectory
+    cannot compensate by design (this is the correct output, not a bug)
+```
+
+That last one is Canary's dogfood: **the tool flags its own new owner as
+CAUTION.** Conservatism on unknown-new-owners is the feature, not a false
+positive — a blind LLM agent visiting an unknown new repo should be told to
+look twice, including at us.
+
+On the current 11-entry seed dataset (5 ENGAGE / 2 CAUTION / 4 AVOID) the gate
+scores **100% exact match, 0 false-green**. n is small — this is
+infrastructure that makes n cheap to grow, not proof that the signal set is
+calibrated. See [`bench/README.md`](bench/README.md) for the honest state and
+how to add a case.
+
 ## Use as an MCP server (for agents)
 
 Expose Canary as a tool an autonomous agent calls *before* engaging a repo or bounty.
