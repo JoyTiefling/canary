@@ -16,10 +16,13 @@ class SignalResult:
     risk: float | None   # 0..1, None when unavailable
     weight: float
     detail: str
+    hard: bool = True    # categorical evidence / direct observation; False = probabilistic tilt.
+                         # DESIGN §8: only HARD signals can single-block a clean ENGAGE.
+                         # Default True for safety — a signal must opt OUT of veto power.
 
 
-def _ok(name, dim, risk, weight, detail):
-    return SignalResult(name, dim, True, risk, weight, detail)
+def _ok(name, dim, risk, weight, detail, hard=True):
+    return SignalResult(name, dim, True, risk, weight, detail, hard)
 
 
 def _na(name, dim, weight, detail):
@@ -52,7 +55,13 @@ def sig_owner_age(owner_user, events=None):
     young owner should be able to *earn* trust via observable work (push trajectory).
     `events` is the unauth public events list (see GitHub.events); when present and
     the owner shows a real push trajectory, the risk band eases — without granting
-    exceptions to brand-new accounts (the <30d bootstrap floor is non-negotiable)."""
+    exceptions to brand-new accounts (the <30d bootstrap floor is non-negotiable).
+
+    HARD, all bands (§8, calibrated 2026-07-23): young-owner-without-observable-work
+    is the classic throwaway-farm profile; trajectory is the designed discriminator
+    (§7), and the error costs are asymmetric (false positive = recoverable CAUTION,
+    false negative = contributor walks into a trap). Bootstrap floor stays absolute —
+    no conditional escape (self-audit 2026-06-22 filed as data, status quo won)."""
     if not owner_user:
         return _na("owner_age", "authenticity", 0.6, "owner profile unavailable")
     a = age_days(owner_user.get("created_at"))
@@ -95,21 +104,26 @@ def sig_fast_growth(repo):
     if age is None:
         return _na("fast_growth", "authenticity", 0.5, "no created_at")
     if age < 60 and stars > 300:
-        return _ok("fast_growth", "authenticity", 0.75, 0.5, f"{stars}★ in {age}d (suspiciously fast)")
-    return _ok("fast_growth", "authenticity", 0.05, 0.5, f"{stars}★ over {age}d")
+        # SOFT (§8): fast growth can be legit virality — risk tilt, not proof.
+        return _ok("fast_growth", "authenticity", 0.75, 0.5, f"{stars}★ in {age}d (suspiciously fast)", hard=False)
+    return _ok("fast_growth", "authenticity", 0.05, 0.5, f"{stars}★ over {age}d", hard=False)
 
 
 def sig_fake_star(repo):
     """Fork:star ratio heuristic (Dagster/StarScout: very low ratio at scale = suspect).
-    Low weight & guarded — this is a weak proxy, not proof."""
+    Low weight & guarded — this is a weak proxy, not proof.
+    SOFT (§8, calibrated 2026-07-23): StarScout proves fake stars via account-level
+    forensics (cluster analysis); WE only compute a ratio proxy. Until account-level
+    detection is implemented, the evidentiary character of this signal is
+    probabilistic — flip to hard=True if/when real forensics land."""
     stars = repo.get("stargazers_count", 0)
     forks = repo.get("forks_count", 0)
     if stars < 100:
         return _na("fake_star", "authenticity", 0.3, "too few stars to judge ratio")
     ratio = forks / stars
     if ratio < 0.015:
-        return _ok("fake_star", "authenticity", 0.6, 0.3, f"fork:star={ratio:.3f} very low (fake-star proxy)")
-    return _ok("fake_star", "authenticity", 0.05, 0.3, f"fork:star={ratio:.3f} healthy")
+        return _ok("fake_star", "authenticity", 0.6, 0.3, f"fork:star={ratio:.3f} very low (fake-star proxy)", hard=False)
+    return _ok("fake_star", "authenticity", 0.05, 0.3, f"fork:star={ratio:.3f} healthy", hard=False)
 
 
 def sig_fork_swarm(repo):
@@ -138,14 +152,18 @@ def sig_fork_swarm(repo):
         # let issue-level contention signals decide, don't single-handedly punish.
         return _na("fork_swarm", "swarm", 0.4, "no stars baseline for swarm ratio")
     ratio = forks / stars
+    # SOFT all bands (§8, calibrated 2026-07-23): docstring already said "soft
+    # contention signal" — the flag now matches intent. Amplifier, not veto:
+    # pairs with linked_prs/contention/flood into a real CAUTION, passes alone
+    # on a tutorial repo (6/8 false-positives on the tutorial set, ROADMAP).
     if stars < 200 and ratio >= 1.5:
         return _ok("fork_swarm", "swarm", 0.55, 0.4,
-                   f"{forks} forks / {stars}★ on a small repo — hunter swarm")
+                   f"{forks} forks / {stars}★ on a small repo — hunter swarm", hard=False)
     if stars < 500 and ratio >= 1.0:
         return _ok("fork_swarm", "swarm", 0.3, 0.4,
-                   f"{forks} forks / {stars}★ — heavy swarm for repo size")
+                   f"{forks} forks / {stars}★ — heavy swarm for repo size", hard=False)
     return _ok("fork_swarm", "swarm", 0.05, 0.4,
-               f"fork:star={ratio:.2f}, healthy for scale ({stars}★)")
+               f"fork:star={ratio:.2f}, healthy for scale ({stars}★)", hard=False)
 
 
 def sig_push_recency(repo):
@@ -230,7 +248,9 @@ def sig_linked_prs(timeline):
     if no == 2:
         return _ok("linked_prs", "contention", 0.78, 0.6, "2 open linked PRs")
     if no == 1:
-        return _ok("linked_prs", "contention", 0.7, 0.6, "1 open linked PR (someone's already on it)")
+        # SOFT at n=1 (§8, calibrated 2026-07-23): a single cross-ref may be a
+        # fork/mention proxy artifact (see docstring). n>=2 is unambiguous fact.
+        return _ok("linked_prs", "contention", 0.7, 0.6, "1 open linked PR (someone's already on it)", hard=False)
     if nt >= 1:
         return _ok("linked_prs", "contention", 0.3, 0.6, f"{nt} linked PR(s), all closed")
     return _ok("linked_prs", "contention", 0.05, 0.6, "no linked PRs")
@@ -255,7 +275,10 @@ def sig_owner_bounty_flood(open_bounty_count):
     if n <= 10:
         return _ok("owner_bounty_flood", "contention", 0.3, 0.5, f"{n} open bounties from this owner (busy)")
     if n <= 25:
-        return _ok("owner_bounty_flood", "contention", 0.55, 0.5, f"{n} open bounties from this owner (heavy dilution)")
+        # SOFT (§8, calibrated 2026-07-23): dilution probability in the boundary
+        # band — the commaai/opendbc false-positive fix. 26+ stays HARD (farm-scale
+        # is a categorical pattern).
+        return _ok("owner_bounty_flood", "contention", 0.55, 0.5, f"{n} open bounties from this owner (heavy dilution)", hard=False)
     if n <= 50:
         return _ok("owner_bounty_flood", "contention", 0.75, 0.5, f"{n} open bounties from this owner (farm-scale dilution)")
     return _ok("owner_bounty_flood", "contention", 0.92, 0.5, f"{n} open bounties from this owner (industrial bounty farm)")

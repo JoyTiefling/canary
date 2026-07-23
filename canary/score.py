@@ -57,14 +57,18 @@ def aggregate(signals, required_dims=()):
     else:
         verdict = "AVOID"
 
-    # A single elevated signal blocks a clean ENGAGE — for a trust tool the worst
-    # signal matters more than the average (else many low repo signals dilute one
-    # real red flag, e.g. an open linked PR on an otherwise-fine repo).
+    # A single elevated HARD signal blocks a clean ENGAGE — for a trust tool the
+    # worst categorical signal matters more than the average (else many low repo
+    # signals dilute one real red flag, e.g. two open linked PRs on an otherwise-
+    # fine repo). SOFT (probabilistic) signals are scoped OUT of this rule
+    # (DESIGN §8, calibrated 2026-07-23): a probability tilt at 0.55 adds weighted
+    # risk and can pair with peers into a real CAUTION/AVOID, but cannot veto a
+    # clean go on its own. Dimension veto (>= 0.80) above remains signal-agnostic.
     if verdict == "ENGAGE":
-        hot = max((s.risk for s in avail), default=0.0)
+        hot = max((s.risk for s in avail if s.hard), default=0.0)
         if hot >= 0.55:
             verdict = "CAUTION"
-            reasons.append(f"downgraded to CAUTION: a single signal at risk {hot:.2f} blocks a clean go")
+            reasons.append(f"downgraded to CAUTION: a single categorical signal at risk {hot:.2f} blocks a clean go")
 
     # Surface the top contributing risks for explainability.
     for s in sorted(avail, key=lambda x: (x.risk * x.weight), reverse=True)[:4]:

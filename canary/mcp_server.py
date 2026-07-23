@@ -39,6 +39,14 @@ class SignalOutput(BaseModel):
     )
     weight: float = Field(description="Weight of this signal in the overall aggregate.")
     detail: str = Field(description="Human-readable explanation of what the signal saw.")
+    hard: bool = Field(
+        default=True,
+        description=(
+            "Evidentiary character: true = categorical evidence / direct observation "
+            "(can single-handedly downgrade a clean ENGAGE); false = probabilistic tilt "
+            "(contributes weighted risk, cannot veto alone)."
+        ),
+    )
 
 
 class VerdictOutput(BaseModel):
@@ -98,6 +106,7 @@ def _to_verdict_output(target: str, v: Verdict, verbose: bool = False) -> Verdic
                 risk=s.risk,
                 weight=s.weight,
                 detail=s.detail,
+                hard=s.hard,
             )
             for s in v.signals
         ] if verbose else None,

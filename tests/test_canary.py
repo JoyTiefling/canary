@@ -11,8 +11,8 @@ from canary.score import aggregate
 from canary.github import parse_target, set_clock
 
 
-def S(name, dim, risk, weight=0.5, available=True):
-    return SignalResult(name, dim, available, risk, weight, name)
+def S(name, dim, risk, weight=0.5, available=True, hard=True):
+    return SignalResult(name, dim, available, risk, weight, name, hard)
 
 
 def test_clean_engage():
@@ -63,11 +63,32 @@ def test_issue_missing_contention_is_unknown_not_engage():
 
 
 def test_single_hot_signal_blocks_clean_engage():
-    # clean repo signals but one elevated signal (e.g. open linked PR) -> CAUTION
+    # clean repo signals but one elevated HARD signal (e.g. 2 open linked PRs) -> CAUTION
     sigs = [S("auth", "authenticity", 0.05, 1.0), S("resp", "responsiveness", 0.05, 0.4),
             S("linked", "contention", 0.7, 0.6)]
     v = aggregate(sigs)
     assert v.verdict == "CAUTION", (v.verdict, v.risk)
+
+
+def test_soft_signal_alone_does_not_single_block():
+    # DESIGN §8 (calibrated 2026-07-23): a SOFT (probabilistic) signal at 0.55-0.7
+    # with clean peers must NOT single-block a clean ENGAGE. It tilts overall risk;
+    # it does not get categorical veto power. This is the fork_swarm/flood fix.
+    sigs = [S("auth", "authenticity", 0.05, 1.0), S("resp", "responsiveness", 0.05, 0.4),
+            S("swarm", "swarm", 0.55, 0.4, hard=False)]
+    v = aggregate(sigs)
+    assert v.verdict == "ENGAGE", (v.verdict, v.risk)
+
+
+def test_soft_signal_paired_with_hard_still_blocks():
+    # The HARD signal fires the single-block rule; the SOFT one contributes the
+    # weighted risk that kept us near the boundary. Pairing must still CAUTION.
+    sigs = [S("auth", "authenticity", 0.05, 1.0), S("resp", "responsiveness", 0.05, 0.4),
+            S("swarm", "swarm", 0.55, 0.4, hard=False),
+            S("linked", "contention", 0.55, 0.3)]
+    v = aggregate(sigs)
+    assert v.verdict == "CAUTION", (v.verdict, v.risk)
+    assert any("single" in r or "categorical" in r for r in v.reasons), v.reasons
 
 
 def test_linked_prs_open_is_contention():
@@ -156,10 +177,22 @@ def test_owner_flood_industrial_vetoes():
     assert v.verdict == "AVOID", (v.verdict, v.risk)
 
 
-def test_owner_flood_heavy_downgrades_not_vetoes():
-    # heavy-but-plausible (20) blocks a clean go but does not hard-AVOID
+def test_owner_flood_heavy_is_soft_tilt_not_single_block():
+    # DESIGN §8 (calibrated 2026-07-23): the 11-25 dilution band (0.55) is SOFT —
+    # a probability tilt that no longer single-blocks a clean go on its own.
+    # This is the commaai/opendbc#3426 fix (legit $10k bounty, 10y owner, all
+    # other signals clean — used to be dragged to CAUTION by flood alone).
     r = sig_owner_bounty_flood(20)
-    assert 0.5 <= r.risk < 0.8, r
+    assert 0.5 <= r.risk < 0.8 and r.hard is False, r
+    v = aggregate([S("auth", "authenticity", 0.05, 1.0), S("resp", "responsiveness", 0.05, 0.4), r])
+    assert v.verdict == "ENGAGE", (v.verdict, v.risk)
+
+
+def test_owner_flood_farm_scale_still_blocks():
+    # 26-50 (farm-scale, 0.75) stays HARD: categorical pattern — blocks a clean
+    # go via single-block (still below the 0.8 contention veto).
+    r = sig_owner_bounty_flood(30)
+    assert r.risk == 0.75 and r.hard is True, r
     v = aggregate([S("auth", "authenticity", 0.05, 1.0), S("resp", "responsiveness", 0.05, 0.4), r])
     assert v.verdict == "CAUTION", (v.verdict, v.risk)
 
@@ -184,12 +217,18 @@ def test_fork_swarm_no_stars_unavailable():
 
 def test_fork_swarm_helpdesk_anchor_triggers_clear():
     # HELPDESK.AI live anchor (149f / 90★, 3-mo-old) — the case fake_star punted on.
-    # Must hit the 0.55 "hunter swarm" tier and downgrade a clean ENGAGE to CAUTION
-    # via the single-signal-block rule in score.py.
+    # Must hit the 0.55 "hunter swarm" tier as a SOFT signal (DESIGN §8, 2026-07-23):
+    # alone on otherwise-clean signals it no longer single-blocks (that shape was the
+    # 6/8 tutorial-repo false-positive), but paired with a HARD contention signal —
+    # the real HELPDESK shape — it amplifies into CAUTION.
     r = sig_fork_swarm({"stargazers_count": 90, "forks_count": 149})
     assert r.available and r.dimension == "swarm" and r.risk == 0.55, r
-    v = aggregate([S("auth", "authenticity", 0.05, 1.0),
-                   S("resp", "responsiveness", 0.05, 0.4), r])
+    assert r.hard is False, "fork_swarm must be a soft probability tilt (§8)"
+    clean = [S("auth", "authenticity", 0.05, 1.0), S("resp", "responsiveness", 0.05, 0.4)]
+    # tutorial-repo shape: swarm tilt alone -> no single-block
+    assert aggregate(clean + [r]).verdict == "ENGAGE"
+    # hunter shape: swarm tilt + hard contention evidence -> CAUTION
+    v = aggregate(clean + [r, S("linked", "contention", 0.55, 0.3)])
     assert v.verdict == "CAUTION", (v.verdict, v.risk)
 
 
