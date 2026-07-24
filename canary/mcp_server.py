@@ -161,12 +161,31 @@ def canary_check(
     Cardinal rule: the tool never returns ENGAGE on missing data. Absence of evidence is
     not evidence of safety, so gaps resolve to UNKNOWN, not a false green.
 
+    Do NOT call when:
+        - Target is not a GitHub URL/shorthand (e.g. GitLab, Bitbucket, a package name
+          without a repo). Verdict will be UNKNOWN with an error — wastes a round-trip.
+        - Repo is private. The tool sees only the public API surface, so the answer
+          will be UNKNOWN even if the repo is fine.
+        - You (or another agent in this session) already checked the same target within
+          the last ~30-60 minutes. Repo-level signals (owner age, releases, activity)
+          move slowly; cache the previous verdict. Exception: an issue-level check
+          where new attempts may have landed since — re-check is warranted.
+        - Target is a known upstream you already depend on and trust. Canary is a
+          *pre-engagement* gate for unfamiliar repos/bounties, not a re-audit tool for
+          codebases already in your dependency graph.
+
     Returns a typed `VerdictOutput` (see fields on that model). The SDK emits the
     structured object as `structuredContent` on the tool result and advertises the
     schema via `outputSchema`, so callers who want the object can consume it directly
     rather than parsing the text form.
 
     Tip: set GITHUB_TOKEN in the server environment to raise the GitHub API rate limit.
+    Approx cost per call: 1-3 unauth GitHub API calls at the repo level, +2-3 more
+    for an issue-level (`owner/repo#N`) target; wall-clock ~1-3 s. Verdict is stable
+    across minutes/hours because the underlying signals move slowly (owner age,
+    releases, activity band); the fastest-moving component is the attempts count on
+    issue-level checks — cache repo-level verdicts freely, refresh issue-level ones
+    when new attempts may have landed.
     """
     v, err = scan(target)
     if err:
