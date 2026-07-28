@@ -429,3 +429,136 @@ def test_releases_without_repo_metadata_is_unavailable():
     # "no releases (young repo)" would invent a fact.
     s = sig_releases({}, None)
     assert s.available is False and s.risk is None, (s.available, s.risk)
+
+
+# --- absence vs emptiness (audit 2026-07-29) --------------------------------
+# Follow-up to the false-certainty fix: the same sin one layer lower. A fetcher
+# that returns [] on a failed request hands the signal layer a network error
+# dressed as a fact, and the honest-absence branches downstream become dead code.
+
+class _DeadAPI:
+    """A GitHub client whose every request fails (HTTP 502)."""
+    def __init__(self):
+        from canary.github import GitHub
+        self.gh = GitHub()
+        self.gh._get = lambda path: (None, 502)
+
+
+def test_failed_list_fetch_returns_none_not_empty():
+    """[] must mean 'looked, found nothing'; None must mean 'could not look'."""
+    gh = _DeadAPI().gh
+    assert gh.releases("o", "r") is None
+    assert gh.issue_timeline("o", "r", 1) is None
+    assert gh.issue_comments("o", "r", 1) is None
+
+
+def test_failed_timeline_does_not_certify_absence_of_contention():
+    """A 502 on the timeline endpoint must not read as 'no linked PRs' (risk 0.05).
+    sig_linked_prs always had the `timeline is None -> unavailable` branch; before
+    this fix nothing could ever reach it."""
+    gh = _DeadAPI().gh
+    r = sig_linked_prs(gh.issue_timeline("o", "r", 1))
+    assert r.available is False, f"clean bill from a network error: {r.detail}"
+
+
+def test_failed_comments_fetch_leaves_contention_unknown():
+    from canary.signals import sig_contention
+    r = sig_contention({"comments": 3}, None)
+    assert r.available is False
+
+
+def test_failed_releases_fetch_is_not_no_releases():
+    r = sig_releases({"created_at": "2020-01-01T00:00:00Z"}, None)
+    assert r.available is False, f"invented evidence: {r.detail}"
+
+
+def test_missing_fork_count_does_not_accuse_of_fake_stars():
+    """Absent forks_count defaulted to 0 -> ratio 0.000 -> 'fake-star proxy' risk
+    0.6. False certainty pointed at the risky side is still false certainty."""
+    from canary.signals import sig_fake_star
+    r = sig_fake_star({"stargazers_count": 500})
+    assert r.available is False, f"accusation manufactured from a missing field: {r.detail}"
+
+
+def test_partial_issue_payload_buys_no_clean_bill():
+    """'no one assigned' / 'no honeypot markers' are green lights on their
+    dimensions — they must rest on data we actually read, not on absent keys."""
+    from canary.signals import sig_assigned_reserved, sig_honeypot
+    assert sig_assigned_reserved({"labels": []}).available is False
+    assert sig_honeypot({}, {"labels": []}).available is False
+
+
+# --- structural gate: honesty as a property, not a coincidence --------------
+
+def _keys_read(fn, param):
+    """Keys a signal function reads off `param` via `param.get("...")`, harvested
+    from its own source. Self-maintaining: a newly added `.get()` is covered the
+    day it is written, with no list here to keep in sync."""
+    import ast, inspect, textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    found = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == param
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            found.add(node.args[0].value)
+    return found
+
+
+def test_no_signal_changes_its_confident_verdict_because_a_datum_is_absent():
+    """The invariant behind every false-green/false-certainty bug found so far:
+    removing a datum may only make a signal LESS certain. If knocking out a key
+    leaves the signal `available` but with a DIFFERENT risk, that signal inferred
+    something from absence — it read silence as a value.
+
+    Fixtures are chosen so each key is load-bearing in at least one of them;
+    a signal is exercised across all of them."""
+    from canary import signals as SIG
+
+    repos = [
+        {"created_at": "2020-01-01T00:00:00Z", "pushed_at": "2026-07-20T00:00:00Z",
+         "stargazers_count": 500, "forks_count": 60},                    # healthy
+        {"created_at": "2026-06-20T00:00:00Z", "pushed_at": "2026-07-20T00:00:00Z",
+         "stargazers_count": 400, "forks_count": 5},                     # fast growth + low ratio
+        {"created_at": "2020-01-01T00:00:00Z", "pushed_at": "2020-01-01T00:00:00Z",
+         "stargazers_count": 100, "forks_count": 250},                   # swarmed + abandoned
+    ]
+    issues = [
+        {"labels": [{"name": "bounty"}], "user": {"login": "human"},
+         "assignees": [], "assignee": None, "comments": 3},              # clean
+        {"labels": [{"name": "ai agent friendly"}], "user": {"login": "clanker"},
+         "assignees": [{"login": "someone"}], "assignee": None, "comments": 40},  # loaded
+    ]
+    cases = [
+        ("sig_releases",          lambda r, i: SIG.sig_releases(r, []),        "repo",  "repo"),
+        ("sig_fast_growth",       lambda r, i: SIG.sig_fast_growth(r),         "repo",  "repo"),
+        ("sig_fake_star",         lambda r, i: SIG.sig_fake_star(r),           "repo",  "repo"),
+        ("sig_fork_swarm",        lambda r, i: SIG.sig_fork_swarm(r),          "repo",  "repo"),
+        ("sig_push_recency",      lambda r, i: SIG.sig_push_recency(r),        "repo",  "repo"),
+        ("sig_honeypot",          lambda r, i: SIG.sig_honeypot(r, i),         "issue", "issue"),
+        ("sig_assigned_reserved", lambda r, i: SIG.sig_assigned_reserved(i),   "issue", "issue"),
+        ("sig_contention",        lambda r, i: SIG.sig_contention(i, []),      "issue", "issue"),
+    ]
+
+    violations = []
+    for name, call, which, param in cases:
+        keys = _keys_read(getattr(SIG, name), param)
+        assert keys, f"{name}: probe harvested no keys — the AST walk is broken, not the signal"
+        for repo in repos:
+            for issue in issues:
+                base_in = repo if which == "repo" else issue
+                base = call(repo, issue)
+                for key in keys:
+                    if key not in base_in:
+                        continue
+                    knocked = {k: v for k, v in base_in.items() if k != key}
+                    got = call(knocked if which == "repo" else repo,
+                               knocked if which == "issue" else issue)
+                    if got.available and base.available and got.risk != base.risk:
+                        violations.append(
+                            f"{name}: dropping '{key}' kept a confident verdict but moved risk "
+                            f"{base.risk} -> {got.risk} ({got.detail})")
+    assert not violations, "verdict inferred from absent data:\n  " + "\n  ".join(sorted(set(violations)))

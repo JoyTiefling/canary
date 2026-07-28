@@ -89,6 +89,10 @@ def sig_owner_age(owner_user, events=None):
 
 
 def sig_releases(repo, releases):
+    if releases is None:
+        # `None` = the releases endpoint did not answer; `[]` = it answered "none".
+        # Reading a failed fetch as "this project ships nothing" invents evidence.
+        return _na("releases", "authenticity", 0.4, "releases endpoint unavailable")
     age = age_days(repo.get("created_at"))
     has = bool(releases)
     if has:
@@ -105,9 +109,13 @@ def sig_releases(repo, releases):
 
 def sig_fast_growth(repo):
     age = age_days(repo.get("created_at"))
-    stars = repo.get("stargazers_count", 0)
+    stars = repo.get("stargazers_count")
     if age is None:
         return _na("fast_growth", "authenticity", 0.5, "no created_at")
+    if stars is None:
+        # A missing star count is not a zero star count: defaulting to 0 would
+        # report "healthy, slow growth" about a repo whose popularity we never saw.
+        return _na("fast_growth", "authenticity", 0.5, "no star count in repo data")
     if age < 60 and stars > 300:
         # SOFT (§8): fast growth can be legit virality — risk tilt, not proof.
         return _ok("fast_growth", "authenticity", 0.75, 0.5, f"{stars}★ in {age}d (suspiciously fast)", hard=False)
@@ -121,10 +129,17 @@ def sig_fake_star(repo):
     forensics (cluster analysis); WE only compute a ratio proxy. Until account-level
     detection is implemented, the evidentiary character of this signal is
     probabilistic — flip to hard=True if/when real forensics land."""
-    stars = repo.get("stargazers_count", 0)
-    forks = repo.get("forks_count", 0)
+    stars = repo.get("stargazers_count")
+    forks = repo.get("forks_count")
+    if stars is None:
+        return _na("fake_star", "authenticity", 0.3, "no star count in repo data")
     if stars < 100:
         return _na("fake_star", "authenticity", 0.3, "too few stars to judge ratio")
+    if forks is None:
+        # Absent fork count used to default to 0 -> ratio 0.000 -> "very low
+        # (fake-star proxy)" at risk 0.6. That is an ACCUSATION manufactured out of
+        # a missing field: the false-certainty sin pointed at the risky side.
+        return _na("fake_star", "authenticity", 0.3, "no fork count in repo data")
     ratio = forks / stars
     if ratio < 0.015:
         return _ok("fake_star", "authenticity", 0.6, 0.3, f"fork:star={ratio:.3f} very low (fake-star proxy)", hard=False)
@@ -148,8 +163,13 @@ def sig_fork_swarm(repo):
 
     Anchor: HELPDESK.AI 149f/90★ — caught blind 2026-06-01 (Engram #2470 dogfood). Old
     fake_star punted ('too few stars to judge'); the swarm read sees the population."""
-    stars = repo.get("stargazers_count", 0)
-    forks = repo.get("forks_count", 0)
+    stars = repo.get("stargazers_count")
+    forks = repo.get("forks_count")
+    if stars is None or forks is None:
+        # Both counts are load-bearing for the ratio; missing either one used to be
+        # silently read as 0 and could report "healthy for scale" about a swarm we
+        # never measured.
+        return _na("fork_swarm", "swarm", 0.4, "repo star/fork counts unavailable")
     if stars + forks < 20:
         return _na("fork_swarm", "swarm", 0.4, "repo too small to read swarm signal")
     if stars == 0:
@@ -191,6 +211,15 @@ def sig_honeypot(repo, issue=None):
     labels = []
     author_login = ""
     if issue:
+        # Completeness first, verdict second. Both components (bait labels, bot
+        # author) feed the same score, so a payload missing either one can only
+        # produce an under-read — and this signal's 0.95/0.85 band is what crosses
+        # the honeypot veto. A partial read that lands at 0.55 slips under it: the
+        # trap gets waved through because of a fetch gap, not because of facts.
+        missing = [k for k in ("labels", "user") if k not in issue]
+        if missing:
+            return _na("honeypot", "honeypot", 0.4,
+                       f"issue payload incomplete ({', '.join(missing)}) — cannot rule honeypot in or out")
         labels = [l.get("name", "").lower() for l in (issue.get("labels") or [])]
         author_login = ((issue.get("user") or {}).get("login") or "").lower()
     hits = [l for l in labels if any(k in l for k in _HONEY_LABELS)]
@@ -209,6 +238,13 @@ def sig_honeypot(repo, issue=None):
 # ---------- issue-level: availability & contention ----------
 
 def sig_assigned_reserved(issue):
+    # `assignees` is the authoritative multi-assignee field; `assignee` is the legacy
+    # single one. If the authoritative field is absent we have not been told who holds
+    # this issue — and the legacy field being None says nothing about multi-assignment.
+    missing = [k for k in ("labels", "assignees") if k not in issue]
+    if missing:
+        return _na("assigned_reserved", "availability", 0.6,
+                   f"issue payload incomplete ({', '.join(missing)})")
     assignees = issue.get("assignees") or ([] if not issue.get("assignee") else [issue["assignee"]])
     labels = [l.get("name", "").lower() for l in (issue.get("labels") or [])]
     reserved = any("reserved" in l or "interview" in l for l in labels)
@@ -290,6 +326,12 @@ def sig_owner_bounty_flood(open_bounty_count):
 
 
 def sig_contention(issue, comments):
+    if comments is None:
+        # Comments endpoint did not answer. Falling through would run the Algora
+        # parser over nothing and then reach for the comment-count proxy — reporting
+        # "contention unknown" for the right reason matters here, because this
+        # dimension is `required` for issue targets (score.aggregate).
+        return _na("contention", "contention", 0.7, "comments unavailable; contention unknown")
     attempts, found = parse_algora_attempts(comments)
     if found:
         if attempts == 0:

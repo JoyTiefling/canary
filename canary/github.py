@@ -67,15 +67,27 @@ class GitHub:
             return None
         return d["total_count"]
 
+    # NOTE on the return contract of the list endpoints below (releases, timeline,
+    # comments): `[]` means "fetched successfully, genuinely nothing there"; `None`
+    # means "we could not look". They used to collapse both into `[]`, which handed
+    # the signal layer a network error dressed as a clean fact -- a failed timeline
+    # fetch read as "no linked PRs" (risk 0.05) on the dimension the whole tool
+    # exists to measure. The honest-absence branches downstream (sig_linked_prs's
+    # `timeline is None`) were unreachable dead code until this distinction existed.
+
     def releases(self, owner, name):
         d, _ = self._get(f"/repos/{owner}/{name}/releases?per_page=1")
-        return d if isinstance(d, list) else []
+        return d if isinstance(d, list) else None
 
     def issue_timeline(self, owner, name, num, max_pages=3):
         out = []
         for p in range(1, max_pages + 1):
             d, _ = self._get(f"/repos/{owner}/{name}/issues/{num}/timeline?per_page=100&page={p}")
-            if not isinstance(d, list) or not d:
+            if not isinstance(d, list):
+                # Page 1 failing means we saw nothing at all -> no data, not "empty".
+                # A later page failing leaves a partial-but-real list; keep it.
+                return None if p == 1 else out
+            if not d:
                 break
             out.extend(d)
             if len(d) < 100:
@@ -89,7 +101,9 @@ class GitHub:
             d, _ = self._get(
                 f"/repos/{owner}/{name}/issues/{num}/comments?per_page=100&page={p}"
             )
-            if not isinstance(d, list) or not d:
+            if not isinstance(d, list):
+                return None if p == 1 else out
+            if not d:
                 break
             out.extend(d)
             if len(d) < 100:
