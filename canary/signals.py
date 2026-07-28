@@ -95,6 +95,11 @@ def sig_releases(repo, releases):
         return _ok("releases", "authenticity", 0.05, 0.4, "has releases")
     if age is not None and age > 180:
         return _ok("releases", "authenticity", 0.5, 0.4, f"no releases despite age {age}d")
+    if age is None:
+        # No created_at means we're looking at degraded/partial repo data, not at a
+        # young repo. Inferring "young, no releases yet" from absence would assert a
+        # fact we don't have — the false-certainty sibling of the false-green sin.
+        return _na("releases", "authenticity", 0.4, "no repo metadata (created_at missing)")
     return _ok("releases", "authenticity", 0.2, 0.4, "no releases (young repo)")
 
 

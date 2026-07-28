@@ -5,6 +5,23 @@ from .github import GitHub, parse_target, age_days
 from .score import aggregate, Verdict
 
 
+def _unreachable_signals():
+    """Signal set for a repo we could not fetch: the 'repo not reachable' flag plus
+    every repo-level signal built from empty data (all self-report unavailable). Their
+    weight stays in the denominator, so `confidence` reports what we actually covered."""
+    return [
+        S.SignalResult("repo_exists", "authenticity", True, 0.6, 1.0,
+                       "repo not reachable via API (deleted/private/renamed?)"),
+        S.sig_owner_age(None, None),
+        S.sig_releases({}, None),
+        S.sig_fast_growth({}),
+        S.sig_fake_star({}),
+        S.sig_fork_swarm({}),
+        S.sig_push_recency({}),
+        S.sig_honeypot({}, None),
+    ]
+
+
 def scan(url, gh=None):
     gh = gh or GitHub()
     t = parse_target(url)
@@ -20,10 +37,12 @@ def scan(url, gh=None):
             return None, "GitHub API rate limit exhausted -- set GITHUB_TOKEN or wait for reset"
         # Repo not found: deleted/private/renamed. A vanished repo is itself a risk
         # flag (honeypots get taken down), but we don't *know* — flag, don't assert.
-        v = aggregate([
-            S.SignalResult("repo_exists", "authenticity", True, 0.6, 1.0,
-                           "repo not reachable via API (deleted/private/renamed?)")
-        ])
+        # The flag must be weighed against everything we FAILED to see, otherwise
+        # confidence normalises over the single signal we happened to build and comes
+        # back 1.00 — a definitive-looking verdict on one ambiguous datum. Rebuild the
+        # full repo-level set from empty data (each signal self-reports unavailable,
+        # so the weights stay defined in one place) and let coverage speak.
+        v = aggregate(_unreachable_signals())
         return v, None
 
     sigs = []

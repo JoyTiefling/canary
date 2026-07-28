@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from canary.signals import (SignalResult, parse_algora_attempts, sig_linked_prs,
                             sig_owner_bounty_flood, sig_owner_age, _trajectory,
-                            sig_fork_swarm)
+                            sig_fork_swarm, sig_releases)
 from canary.score import aggregate
 from canary.github import parse_target, set_clock
 
@@ -400,3 +400,32 @@ if __name__ == "__main__":
         teardown_module(None)
     print(f"\n{passed}/{len(fns)} passed")
     sys.exit(0 if passed == len(fns) else 1)
+
+
+# --- unreachable repo: honest coverage, not a confident AVOID -----------------
+class _GHUnreachable:
+    """Minimal stub: repo fetch fails, rate limit is fine (so it's not a limit error)."""
+    def repo(self, owner, repo):
+        return None
+    def remaining(self):
+        return 42
+
+
+def test_unreachable_repo_is_unknown_with_honest_confidence():
+    from canary.scan import scan
+    v, err = scan("someowner/vanished", gh=_GHUnreachable())
+    assert err is None
+    # Documented contract (mcp_server docstring: "Repo is private ... will be UNKNOWN").
+    assert v.verdict == "UNKNOWN", (v.verdict, v.confidence)
+    # And the certainty must reflect what we actually covered, not normalise over the
+    # single signal we happened to build.
+    assert v.confidence < 0.35, v.confidence
+    # The risk flag itself is not lost — it stays visible in the reasons.
+    assert any("not reachable" in r for r in v.reasons), v.reasons
+
+
+def test_releases_without_repo_metadata_is_unavailable():
+    # Absent created_at means degraded data, not a young repo: asserting
+    # "no releases (young repo)" would invent a fact.
+    s = sig_releases({}, None)
+    assert s.available is False and s.risk is None, (s.available, s.risk)
