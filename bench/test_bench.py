@@ -101,6 +101,92 @@ def test_trap_verdicts_exclude_engage():
     assert "ENGAGE" not in TRAP_VERDICTS  # the whole point of the safety metric
 
 
+# ---- the UNKNOWN class: capturable absence vs uncapturable silence (2026-07-29) ----
+
+class _FakeGH:
+    """Minimal client that answers 404 for everything, or nothing at all."""
+
+    def __init__(self, status):
+        self.status = status
+
+    def repo_ex(self, o, n):
+        return None, self.status
+
+    def repo(self, o, n):
+        return None
+
+    def remaining(self):
+        return 57  # not rate-limited: the absence is real, not a quota artifact
+
+
+def _capture_to_tmp(target, status):
+    import tempfile, shutil
+    from bench import capture as cap
+    from bench.cassette import fixture_path, slug_for
+    tmp = tempfile.mkdtemp()
+    old = cap.FIXTURES_DIR
+    cap.FIXTURES_DIR = tmp
+    try:
+        st, info = cap.capture_one({"target": target}, _FakeGH(status))
+        wrote = os.path.exists(fixture_path(tmp, slug_for(target)))
+        return st, info, wrote
+    finally:
+        cap.FIXTURES_DIR = old
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_answered_absence_is_capturable():
+    # GitHub said 404 -> that answer IS the datum. Before 2026-07-29 capture refused
+    # it ("unresolved"), so UNKNOWN — the one class the gate can honestly emit — was
+    # the one class the benchmark structurally could not hold.
+    st, info, wrote = _capture_to_tmp("o/gone", 404)
+    assert st == "absent", (st, info)
+    assert wrote, "an answered absence must be written to disk as a fixture"
+
+
+def test_unanswered_lookup_is_not_recorded():
+    # No answer (offline/DNS/timeout) is NOT evidence of absence. Recording it would
+    # freeze a network hiccup into ground truth — the same absence-vs-emptiness error
+    # fixed one layer down in the fetchers (2a37601), re-appearing in the harness.
+    st, info, wrote = _capture_to_tmp("o/maybe", None)
+    assert st == "unreachable", (st, info)
+    assert not wrote, "a target we got no answer about must leave no fixture"
+
+
+def test_absent_repo_replays_to_unknown_not_confident_avoid():
+    # Gates 8220da3 at benchmark level: one ambiguous datum must not normalise into
+    # a confident verdict. On the pre-fix scorer this returns AVOID @ confidence 1.00.
+    store = {"repo:o/gone": None, "remaining": 57}
+    github.set_clock(CLOCK)
+    try:
+        v, err = scan("o/gone", gh=Cassette(store=store))
+    finally:
+        github.set_clock(None)
+    assert err is None and v.verdict == "UNKNOWN", (v.verdict, v.reasons)
+    assert v.confidence < 0.5, f"confidence {v.confidence} on a single ambiguous datum"
+
+
+def test_cassette_covers_the_client_surface():
+    # The generalised form of a bug hit on 2026-07-29: GitHub.events() was added to
+    # the client long after this shim, and capture died mid-run with AttributeError
+    # on the first target whose owner fell in the trajectory band. A shim that lags
+    # the client silently shrinks what the benchmark can hold — so assert the surface
+    # instead of chasing each new method.
+    api = {m for m in dir(github.GitHub)
+           if not m.startswith("_") and callable(getattr(github.GitHub, m))}
+    api -= {"repo_ex"}  # capture-only: asks the REAL client why a lookup came back empty
+    missing = sorted(m for m in api if not hasattr(Cassette(), m))
+    assert not missing, f"Cassette lags GitHub client: {missing}"
+
+
+def test_dataset_covers_every_verdict_class():
+    # An empty class is a place the metric cannot look: precision/recall for it read
+    # as vacuously fine. Kept as a standing gate, not a one-off fix.
+    labels = {e.get("expected") for e in load_dataset()}
+    for v in ("ENGAGE", "CAUTION", "AVOID", "UNKNOWN"):
+        assert v in labels, f"benchmark has no {v} row — that class is unmeasured"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

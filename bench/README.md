@@ -41,9 +41,15 @@ python bench/test_bench.py       # harness self-tests (offline, no fixtures need
 
 ## Honest state (not done — started)
 
-- Current dataset covers **ENGAGE** (legit repos) and **AVOID** (swarmed /
-  assigned bounties). **CAUTION and UNKNOWN classes are not yet represented** —
-  precision/recall for them is meaningless until the set grows.
+- All four verdict classes now have at least one row (`test_dataset_covers_every_
+  verdict_class` keeps it that way), but **CAUTION n=1 and UNKNOWN n=2** — enough
+  to make the class measurable, nowhere near enough to call it calibrated.
+- UNKNOWN was unrepresented until 2026-07-29 for a structural reason worth
+  remembering: `capture.py` refused to snapshot any target the API couldn't
+  resolve, so the one class the gate can honestly emit was the one class the
+  harness could not hold. A repo GitHub *answers* 404/403/451 for is now captured
+  (the answer is the datum); a target we got **no** answer about is still refused
+  — recording that would freeze a network hiccup into ground truth.
 - n is still small. This is infrastructure that makes growing n cheap, not proof
   that the gate is calibrated. Each new probe finding should land here as a row.
 - Fixtures are raw API snapshots; busy issues (long timelines / comment threads)

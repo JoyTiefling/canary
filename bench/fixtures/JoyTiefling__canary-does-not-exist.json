@@ -1,0 +1,9 @@
+{
+ "absent_reason": "repo not visible via API (HTTP 404)",
+ "captured_at": "2026-07-29T04:03:56.791559+00:00",
+ "store": {
+  "remaining": 59,
+  "repo:JoyTiefling/canary-does-not-exist": null
+ },
+ "target": "JoyTiefling/canary-does-not-exist"
+}

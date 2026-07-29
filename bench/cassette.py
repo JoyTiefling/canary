@@ -30,6 +30,15 @@ class Cassette:
     def user(self, login):
         return self._io(f"user:{login}", lambda: self.real.user(login))
 
+    def events(self, login, per_page=100):
+        # Added to GitHub after this shim was first written; a target whose owner
+        # falls in the 30..365d trajectory band could not be captured at all until
+        # this existed (AttributeError mid-capture, 2026-07-29). Missing key replays
+        # as None ("we did not look"), NOT [] ("we looked, they did nothing") — the
+        # two happen to land in the same band today, and that is a coincidence of
+        # calibration, not a licence to conflate them.
+        return self._io(f"events:{login}", lambda: self.real.events(login, per_page))
+
     def releases(self, o, n):
         v = self._io(f"releases:{o}/{n}", lambda: self.real.releases(o, n))
         return v if isinstance(v, list) else []
@@ -71,9 +80,14 @@ def slug_for(target):
     return target.replace("/", "__").replace("#", "__").replace(" ", "")
 
 
-def save_cassette(path, target, store, captured_at=None):
+def save_cassette(path, target, store, captured_at=None, absent_reason=None):
+    """`absent_reason` (optional) records that the API ANSWERED "not visible" for this
+    target — the fixture holds a real recorded absence, not a failed capture. Without
+    it, a fixture full of nulls is indistinguishable from a broken snapshot."""
     captured_at = captured_at or datetime.now(timezone.utc).isoformat()
     payload = {"target": target, "captured_at": captured_at, "store": store}
+    if absent_reason:
+        payload["absent_reason"] = absent_reason
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=1, sort_keys=True)

@@ -26,8 +26,18 @@ class GitHub:
         except Exception:
             return None, None
 
+    def repo_ex(self, owner, name):
+        """(data, http_status) for a repo lookup. `status` in (404, 403, 451) means
+        GitHub ANSWERED and the repo is not visible to us — a recorded fact. `status
+        is None` means we never got an answer (DNS, timeout, offline) — an absence of
+        data about an absence. `repo()` below collapses both to None on purpose: the
+        verdict is UNKNOWN either way, so the signal layer must not branch on it. The
+        benchmark does need them apart — it may only record a fixture for the first
+        kind, or it would freeze a network hiccup into ground truth."""
+        return self._get(f"/repos/{owner}/{name}")
+
     def repo(self, owner, name):
-        d, _ = self._get(f"/repos/{owner}/{name}")
+        d, _ = self.repo_ex(owner, name)
         return d
 
     def remaining(self):
