@@ -13,7 +13,12 @@ Metrics, in priority order:
   3. CONFUSION    — full matrix + per-class precision/recall.
 
 Entries without a captured fixture are reported as MISSING and excluded from
-scoring (run `python -m bench.capture` first), never counted as passes."""
+scoring (run `python -m bench.capture` first), never counted as passes.
+
+  3. COVERAGE     — an entry that did not replay, or a verdict class absent from
+                    the scored set, also makes this exit non-zero. A run that
+                    measured nothing cannot observe a false-green, so exiting 0
+                    on zero measurements would report health it never checked."""
 import sys
 import os
 
@@ -122,10 +127,36 @@ def main(argv):
         print("\nper-class   prec  recall   n")
         for v, (p, r, cnt) in _prec_recall(m).items():
             print(f"  {v:<10}{_fmt(p)} {_fmt(r)}  {cnt:>3}")
+    # A run that measured nothing is not a passing run. Positive control 30-07:
+    # with FIXTURES_DIR pointing at nothing, and again with scan() broken on every
+    # entry, this gate printed "FALSE-GREEN: 0 [none]" and exited 0 — the instrument
+    # reported its best possible result having measured zero targets. The failure it
+    # detects requires a successful measurement to exist, so its silence was never
+    # evidence of health. Same shape as the empty UNKNOWN class (29-07), one layer up:
+    # what is not measured cannot complain.
+    errored = [(t, why) for t, why in missing if why != "no fixture"]
+    uncaptured = [(t, why) for t, why in missing if why == "no fixture"]
+    scored_classes = {exp for exp, _ in rows}
+    absent_classes = [v for v in VERDICTS if v not in scored_classes]
+
+    incomplete = []
+    if errored:
+        incomplete.append(f"{len(errored)} entr{'y' if len(errored) == 1 else 'ies'} "
+                          f"failed to replay (pipeline error, not a missing fixture)")
+    if uncaptured:
+        incomplete.append(f"{len(uncaptured)} fixture(s) not captured "
+                          f"(run `python -m bench.capture`)")
+    if absent_classes:
+        incomplete.append("verdict class(es) absent from the scored set: "
+                          + ", ".join(absent_classes))
+    print(f"COVERAGE: {'ok' if not incomplete else 'INCOMPLETE'}"
+          + "".join(f"\n  ! {p}" for p in incomplete))
     print("=" * 60)
 
-    # CI gate: the only hard failure is sending a contributor into a trap.
-    return 1 if false_green else 0
+    # CI gate, in priority order:
+    #   1. FALSE-GREEN — a contributor sent into a trap. The user-facing error.
+    #   2. INCOMPLETE  — the run did not measure what it claims to measure.
+    return 1 if (false_green or incomplete) else 0
 
 
 if __name__ == "__main__":

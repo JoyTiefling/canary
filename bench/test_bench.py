@@ -187,6 +187,48 @@ def test_dataset_covers_every_verdict_class():
         assert v in labels, f"benchmark has no {v} row — that class is unmeasured"
 
 
+def _run_gate(**patches):
+    """Call the bench CI gate with bench.run attributes temporarily replaced."""
+    import bench.run as R
+    saved = {k: getattr(R, k) for k in patches}
+    try:
+        for k, v in patches.items():
+            setattr(R, k, v)
+        return R.main([])
+    finally:
+        for k, v in saved.items():
+            setattr(R, k, v)
+
+
+def test_gate_fails_when_no_fixture_replayed():
+    # Positive control on the instrument itself (30-07): with nothing to replay the
+    # gate used to print "FALSE-GREEN: 0 [none]" and exit 0 — its best possible
+    # result, on zero measurements. Silence from a detector that never ran is not
+    # evidence. Same shape as an empty verdict class, one layer up.
+    assert _run_gate(FIXTURES_DIR="/canary-no-such-fixtures-dir") != 0
+
+
+def test_gate_fails_when_every_entry_errors():
+    # Pipeline broken on all targets: entries land in MISSING as "scan error", are
+    # excluded from scoring, and produce no false-green. Must not read as a pass.
+    assert _run_gate(evaluate=lambda e: (None, "scan error: boom")) != 0
+
+
+def test_gate_fails_when_a_verdict_class_is_unscored():
+    # The dataset covering all four classes (above) is not enough: if only some
+    # entries replay, the scored set can silently lose a class again.
+    engage_only = [e for e in load_dataset() if e.get("expected") == "ENGAGE"]
+    assert engage_only, "dataset lost its ENGAGE rows"
+    assert _run_gate(load_dataset=lambda: engage_only,
+                     evaluate=lambda e: (e.get("expected"), [])) != 0
+
+
+def test_gate_passes_a_complete_clean_run():
+    # Negative control for the three above: a full, correct replay must still exit 0,
+    # or the new coverage check would be indistinguishable from "always fails".
+    assert _run_gate(evaluate=lambda e: (e.get("expected"), [])) == 0
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
