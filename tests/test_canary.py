@@ -380,26 +380,6 @@ def test_parse_target_forms():
     assert parse_target("garbage ::") is None
 
 
-if __name__ == "__main__":
-    # Mimic pytest's module-level setup/teardown so `python tests/test_canary.py`
-    # behaves the same as `pytest` (owner_age tests rely on a frozen clock).
-    if "setup_module" in globals():
-        setup_module(None)
-    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    passed = 0
-    for fn in fns:
-        try:
-            fn()
-            print(f"PASS {fn.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"FAIL {fn.__name__}: {e}")
-        except Exception as e:
-            print(f"ERROR {fn.__name__}: {e}")
-    if "teardown_module" in globals():
-        teardown_module(None)
-    print(f"\n{passed}/{len(fns)} passed")
-    sys.exit(0 if passed == len(fns) else 1)
 
 
 # --- unreachable repo: honest coverage, not a confident AVOID -----------------
@@ -562,3 +542,120 @@ def test_no_signal_changes_its_confident_verdict_because_a_datum_is_absent():
                             f"{name}: dropping '{key}' kept a confident verdict but moved risk "
                             f"{base.risk} -> {got.risk} ({got.detail})")
     assert not violations, "verdict inferred from absent data:\n  " + "\n  ".join(sorted(set(violations)))
+
+
+# --- engageability: is the door even open? (probe 2026-07-31) ----------------
+# Pre-registered in bench/PREREG_2026-07-31_archived.md. `archived` was never read
+# by the pipeline, so a recently-archived repo (alibaba/fastjson: push 2d old,
+# 25.6k stars, healthy fork ratio, established org) scored byte-identical to
+# facebook/react: ENGAGE, risk 0.05, confidence 0.87. GitHub *refuses* pull
+# requests on an archived repo — that is not elevated risk, it is a closed door.
+
+class _GHRepo:
+    """End-to-end stub around one repo payload. Everything else is clean/established."""
+    def __init__(self, repo_payload):
+        self._repo = repo_payload
+    def repo(self, owner, repo):
+        return dict(self._repo)
+    def user(self, login):
+        return {"login": login, "created_at": "2010-01-01T00:00:00Z"}
+    def events(self, login):
+        return []
+    def releases(self, owner, repo):
+        return [{"tag_name": "v1.0"}]
+    def owner_open_bounties(self, owner):
+        return 0
+    def issue(self, owner, repo, num):
+        return {"labels": [], "assignees": [], "user": {"login": "someone"}, "title": "t", "body": ""}
+    def issue_comments(self, owner, repo, num):
+        return []
+    def issue_timeline(self, owner, repo, num):
+        return []
+    def remaining(self):
+        return 42
+
+
+_HEALTHY = {"owner": {"login": "bigorg"}, "created_at": "2015-01-01T00:00:00Z",
+            "pushed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "stargazers_count": 25611, "forks_count": 6404,
+            "archived": False, "disabled": False, "full_name": "bigorg/thing"}
+
+
+def test_archived_repo_cannot_be_engaged():
+    """The live false-green this test exists for: everything readable looks pristine
+    and the one datum that decides the question was invisible."""
+    from canary.scan import scan
+    v, err = scan("bigorg/thing", gh=_GHRepo({**_HEALTHY, "archived": True}))
+    assert err is None
+    assert v.verdict == "AVOID", (v.verdict, v.risk, v.confidence)
+    assert any("ARCHIVED" in r for r in v.reasons), v.reasons
+
+
+def test_disabled_repo_cannot_be_engaged():
+    from canary.scan import scan
+    v, err = scan("bigorg/thing", gh=_GHRepo({**_HEALTHY, "disabled": True}))
+    assert v.verdict == "AVOID", (v.verdict, v.reasons)
+    assert any("DISABLED" in r for r in v.reasons), v.reasons
+
+
+def test_open_repo_still_engages():
+    """Mirror gate. A 'safe' fix that answered AVOID to every repo would pass the two
+    tests above while destroying the tool, and would look conservative doing it."""
+    from canary.scan import scan
+    v, err = scan("bigorg/thing", gh=_GHRepo(_HEALTHY))
+    assert v.verdict == "ENGAGE", (v.verdict, v.reasons)
+
+
+def test_missing_archived_flag_is_not_permission():
+    """Absence of the flag must not read as 'open'. `.get("archived")` is None here,
+    and the naive `if not archived` spelling would treat it exactly like False."""
+    from canary.signals import sig_repo_open
+    from canary.scan import scan
+    payload = {k: v for k, v in _HEALTHY.items() if k not in ("archived", "disabled")}
+    s = sig_repo_open(payload)
+    assert s.available is False and s.risk is None, (s.available, s.risk)
+    v, err = scan("bigorg/thing", gh=_GHRepo(payload))
+    assert v.verdict == "UNKNOWN", (v.verdict, v.reasons)
+
+
+def test_live_issue_does_not_satisfy_repo_engageability():
+    """Dimension-collision gate. sig_assigned_reserved already owned 'availability';
+    had repo_open shared that dimension, required_dims (which matches by dimension)
+    would be satisfied by an unassigned issue — the repo-level question answered by
+    an issue-level signal."""
+    from canary.scan import scan
+    payload = {k: v for k, v in _HEALTHY.items() if k not in ("archived", "disabled")}
+    v, err = scan("bigorg/thing#7", gh=_GHRepo(payload))
+    assert v.verdict == "UNKNOWN", (v.verdict, v.reasons)
+
+
+if __name__ == "__main__":
+    # MUST stay the last statement in the file. It was at line 383 until 2026-07-31,
+    # and `sys.exit()` fires before Python ever defines what comes after it — so the
+    # 14 tests below that point simply did not exist under `python tests/test_canary.py`,
+    # while the runner cheerfully printed "42/42 passed". Among the invisible ones were
+    # the very gates written to prove the false-green and absence-vs-empty fixes.
+    # The self-check below makes that failure mode loud instead of green.
+    if "setup_module" in globals():
+        setup_module(None)
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    declared = sum(1 for ln in open(__file__, encoding="utf-8") if ln.startswith("def test_"))
+    passed = 0
+    for fn in fns:
+        try:
+            fn()
+            print(f"PASS {fn.__name__}")
+            passed += 1
+        except AssertionError as e:
+            print(f"FAIL {fn.__name__}: {e}")
+        except Exception as e:
+            print(f"ERROR {fn.__name__}: {e}")
+    if "teardown_module" in globals():
+        teardown_module(None)
+    print(f"{passed}/{len(fns)} passed")
+    ok = passed == len(fns)
+    if len(fns) != declared:
+        print(f"RUNNER SELF-CHECK FAILED: collected {len(fns)} tests but the file "
+              f"declares {declared} -- the runner is measuring less than it claims.")
+        ok = False
+    sys.exit(0 if ok else 1)

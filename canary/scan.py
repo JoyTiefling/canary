@@ -18,6 +18,7 @@ def _unreachable_signals():
         S.sig_fake_star({}),
         S.sig_fork_swarm({}),
         S.sig_push_recency({}),
+        S.sig_repo_open({}),
         S.sig_honeypot({}, None),
     ]
 
@@ -62,15 +63,19 @@ def scan(url, gh=None):
         S.sig_fake_star(rd),
         S.sig_fork_swarm(rd),
         S.sig_push_recency(rd),
+        S.sig_repo_open(rd),
     ]
 
     issue = None
-    required = ()
+    # Engageability is required for EVERY target, not just issues: a verdict that
+    # says "go" without knowing whether the repo still accepts work is asserting
+    # the one thing it never checked. Absence of the flag -> UNKNOWN, not ENGAGE.
+    required = ("engageability",)
     if t["kind"] == "issue":
         # For a bounty/issue, contention is the core question. If we can't measure it,
         # the verdict must be UNKNOWN — never a repo-only false-green (a partial fetch
         # that drops the issue-level signals must not collapse into an ENGAGE).
-        required = ("contention",)
+        required = ("contention", "engageability")
         issue = gh.issue(owner, repo, t["num"])
         if issue:
             comments = gh.issue_comments(owner, repo, t["num"])

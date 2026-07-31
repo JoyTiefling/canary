@@ -19,7 +19,10 @@ def _clean_repo_store():
     return {
         "repo:o/r": {"owner": {"login": "o"}, "created_at": "2020-01-01T00:00:00Z",
                      "pushed_at": "2026-05-20T00:00:00Z",
-                     "stargazers_count": 5000, "forks_count": 800},
+                     "stargazers_count": 5000, "forks_count": 800,
+                     # The real API always ships these; a synthetic world that omits
+                     # them is not modelling the one under test (2026-07-31).
+                     "archived": False, "disabled": False},
         "user:o": {"created_at": "2015-01-01T00:00:00Z"},
         "releases:o/r": [{"tag_name": "v1.0"}],
     }

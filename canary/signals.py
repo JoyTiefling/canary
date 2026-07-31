@@ -5,7 +5,8 @@ dimension. risk is 0..1 (higher = more reason to AVOID); available=False means
 from dataclasses import dataclass
 from .github import age_days
 
-DIMENSIONS = ("authenticity", "responsiveness", "honeypot", "contention", "availability", "swarm")
+DIMENSIONS = ("authenticity", "responsiveness", "honeypot", "contention", "availability",
+              "engageability", "swarm")
 
 
 @dataclass
@@ -189,6 +190,35 @@ def sig_fork_swarm(repo):
                    f"{forks} forks / {stars}★ — heavy swarm for repo size", hard=False)
     return _ok("fork_swarm", "swarm", 0.05, 0.4,
                f"fork:star={ratio:.2f}, healthy for scale ({stars}★)", hard=False)
+
+
+def sig_repo_open(repo):
+    """Can a contribution physically land here at all?
+
+    An archived repo is READ-ONLY: GitHub refuses new pull requests and issues on
+    it. That is not elevated risk, it is a closed door — every other signal on such
+    a repo is answering a question that no longer applies. `disabled` (repo taken
+    offline by GitHub) is the same closed door by a different mechanism.
+
+    Absence of the flag is NOT permission (2026-07-29 absence-vs-empty rule): a
+    payload that never told us whether the door is open leaves the signal
+    unavailable, so its weight lowers confidence instead of silently reading as
+    'open'. This matters because `.get("archived")` returning None is falsy, and
+    the naive `if not archived` spelling would treat 'we were not told' exactly
+    like 'we were told no'.
+    """
+    archived = repo.get("archived")
+    disabled = repo.get("disabled")
+    if archived is None and disabled is None:
+        return _na("repo_open", "engageability", 0.7,
+                   "repo payload carries no archived/disabled flag -- cannot assert the repo accepts work")
+    if archived:
+        return _ok("repo_open", "engageability", 1.0, 0.7,
+                   "repo is ARCHIVED (read-only): GitHub refuses new pull requests and issues")
+    if disabled:
+        return _ok("repo_open", "engageability", 1.0, 0.7,
+                   "repo is DISABLED by GitHub: contribution is not possible")
+    return _ok("repo_open", "engageability", 0.02, 0.7, "repo is open to contributions")
 
 
 def sig_push_recency(repo):

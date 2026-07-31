@@ -7,7 +7,11 @@ ENGAGE_MAX = 0.30       # overall risk below this -> ENGAGE
 CAUTION_MAX = 0.55      # below this -> CAUTION, else AVOID
 
 # A single dimension this risky vetoes a green verdict.
-VETO = {"honeypot": 0.8, "contention": 0.8, "availability": 0.8}
+# `availability` = is this *work item* free to take (assignee/reserved label).
+# `engageability` = can a contribution land in this *repo* at all (archived/disabled).
+# They are separate dimensions on purpose: required_dims matches by dimension,
+# so sharing one would let a live issue satisfy the repo-level requirement.
+VETO = {"honeypot": 0.8, "contention": 0.8, "availability": 0.8, "engageability": 0.8}
 
 
 @dataclass
