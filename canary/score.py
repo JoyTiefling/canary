@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 MIN_CONFIDENCE = 0.35   # below this much signal coverage -> UNKNOWN, never a 'go'
 ENGAGE_MAX = 0.30       # overall risk below this -> ENGAGE
 CAUTION_MAX = 0.55      # below this -> CAUTION, else AVOID
+SINGLE_BLOCK_MIN = 0.55  # one HARD signal this hot downgrades a clean ENGAGE (see below)
 
 # A single dimension this risky vetoes a green verdict.
 # `availability` = is this *work item* free to take (assignee/reserved label).
@@ -70,7 +71,7 @@ def aggregate(signals, required_dims=()):
     # clean go on its own. Dimension veto (>= 0.80) above remains signal-agnostic.
     if verdict == "ENGAGE":
         hot = max((s.risk for s in avail if s.hard), default=0.0)
-        if hot >= 0.55:
+        if hot >= SINGLE_BLOCK_MIN:
             verdict = "CAUTION"
             reasons.append(f"downgraded to CAUTION: a single categorical signal at risk {hot:.2f} blocks a clean go")
 
