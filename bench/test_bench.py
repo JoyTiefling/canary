@@ -214,7 +214,7 @@ def test_gate_fails_when_no_fixture_replayed():
 def test_gate_fails_when_every_entry_errors():
     # Pipeline broken on all targets: entries land in MISSING as "scan error", are
     # excluded from scoring, and produce no false-green. Must not read as a pass.
-    assert _run_gate(evaluate=lambda e: (None, "scan error: boom")) != 0
+    assert _run_gate(evaluate=lambda e: (None, "scan error: boom", "")) != 0
 
 
 def test_gate_fails_when_a_verdict_class_is_unscored():
@@ -223,13 +223,13 @@ def test_gate_fails_when_a_verdict_class_is_unscored():
     engage_only = [e for e in load_dataset() if e.get("expected") == "ENGAGE"]
     assert engage_only, "dataset lost its ENGAGE rows"
     assert _run_gate(load_dataset=lambda: engage_only,
-                     evaluate=lambda e: (e.get("expected"), [])) != 0
+                     evaluate=lambda e: (e.get("expected"), [], "veto")) != 0
 
 
 def test_gate_passes_a_complete_clean_run():
     # Negative control for the three above: a full, correct replay must still exit 0,
     # or the new coverage check would be indistinguishable from "always fails".
-    assert _run_gate(evaluate=lambda e: (e.get("expected"), [])) == 0
+    assert _run_gate(evaluate=lambda e: (e.get("expected"), [], "veto")) == 0
 
 
 if __name__ == "__main__":

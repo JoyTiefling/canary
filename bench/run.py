@@ -40,11 +40,13 @@ from bench.dataset import load_dataset, FIXTURES_DIR, VERDICTS, TRAP_VERDICTS
 
 
 def evaluate(entry):
-    """Replay one entry. Returns (predicted, reasons) or (None, why-missing)."""
+    """Replay one entry. Returns (predicted, reasons, rule); on failure the first
+    element is None and the second says why. `rule` names the branch of aggregate()
+    that produced the verdict -- see canary.score.RULES and bench/test_rule_coverage.py."""
     target = entry["target"]
     path = fixture_path(FIXTURES_DIR, slug_for(target))
     if not os.path.exists(path):
-        return None, "no fixture"
+        return None, "no fixture", ""
     payload = load_cassette(path)
     github.set_clock(captured_dt(payload))
     try:
@@ -53,8 +55,8 @@ def evaluate(entry):
     finally:
         github.set_clock(None)
     if err:
-        return None, f"scan error: {err}"
-    return verdict.verdict, verdict.reasons
+        return None, f"scan error: {err}", ""
+    return verdict.verdict, verdict.reasons, verdict.rule
 
 
 def _matrix(rows):
@@ -87,14 +89,16 @@ def main(argv):
     entries = load_dataset()
     rows, missing, scored = [], [], []
     false_green = []
+    rule_hist = {}
 
     for e in entries:
-        pred, info = evaluate(e)
+        pred, info, rule = evaluate(e)
         exp = e.get("expected")
         if pred is None:
             missing.append((e["target"], info))
             continue
         scored.append((e, pred))
+        rule_hist[rule] = rule_hist.get(rule, 0) + 1
         if exp:
             rows.append((exp, pred))
             if exp in TRAP_VERDICTS and pred == "ENGAGE":
@@ -127,6 +131,15 @@ def main(argv):
         print("\nper-class   prec  recall   n")
         for v, (p, r, cnt) in _prec_recall(m).items():
             print(f"  {v:<10}{_fmt(p)} {_fmt(r)}  {cnt:>3}")
+    # Which branch of aggregate() actually decided each verdict. The verdict class
+    # alone hides this: CAUTION can be an accumulation or a single-signal downgrade,
+    # AVOID can be a veto or the top of the ladder. A rule at 0 is a code path this
+    # benchmark has never run -- reported here, gated in bench/test_rule_coverage.py.
+    from canary.score import RULES
+    print("\nrule provenance (which branch decided the verdict):")
+    for r in RULES:
+        c = rule_hist.get(r, 0)
+        print(f"  {r:<18}{c:>4}" + ("   <- never exercised" if not c else ""))
     # A run that measured nothing is not a passing run. Positive control 30-07:
     # with FIXTURES_DIR pointing at nothing, and again with scan() broken on every
     # entry, this gate printed "FALSE-GREEN: 0 [none]" and exited 0 — the instrument

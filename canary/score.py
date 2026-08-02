@@ -15,6 +15,26 @@ SINGLE_BLOCK_MIN = 0.55  # one HARD signal this hot downgrades a clean ENGAGE (s
 VETO = {"honeypot": 0.8, "contention": 0.8, "availability": 0.8, "engageability": 0.8}
 
 
+# Which rule decided the verdict. The verdict class alone does not say this:
+# CAUTION can come from the risk ladder (accumulated weighted risk landed in the
+# band) or from single_block (one categorical signal downgraded a clean go), and
+# AVOID can come from a dimension veto or from the top of the same ladder. Those
+# are different code paths with different failure modes, and until 2026-08-03 the
+# only way to tell them apart was to mutate a threshold and see whether any row
+# moved. Recording provenance makes "which rules has the bench ever exercised"
+# answerable from a run instead of from a sweep. See bench/test_thresholds.py.
+RULES = (
+    "veto",             # a dimension-level hard signal >= VETO[dim]
+    "missing_required", # a required dimension had no available signal
+    "no_signal",        # nothing available at all -> no risk could be computed
+    "low_confidence",   # some data, but too little weight covered to assert safety
+    "ladder:engage",    # weighted risk < ENGAGE_MAX
+    "ladder:caution",   # ENGAGE_MAX <= weighted risk < CAUTION_MAX
+    "ladder:avoid",     # weighted risk >= CAUTION_MAX
+    "single_block",     # ladder said ENGAGE, one hard signal >= SINGLE_BLOCK_MIN downgraded it
+)
+
+
 @dataclass
 class Verdict:
     verdict: str          # ENGAGE | CAUTION | AVOID | UNKNOWN
@@ -22,6 +42,7 @@ class Verdict:
     confidence: float     # share of total weight that had data
     reasons: list = field(default_factory=list)
     signals: list = field(default_factory=list)
+    rule: str = ""        # one of RULES — which branch produced `verdict`
 
 
 def aggregate(signals, required_dims=()):
@@ -47,20 +68,23 @@ def aggregate(signals, required_dims=()):
                         if not any(s.available and s.dimension == d for s in signals)]
 
     if veto_hit:
-        verdict = "AVOID"
+        verdict, rule = "AVOID", "veto"
         reasons.append(f"veto: {veto_hit.name} ({veto_hit.dimension}) risk={veto_hit.risk:.2f} -- {veto_hit.detail}")
     elif missing_required:
-        verdict = "UNKNOWN"
+        verdict, rule = "UNKNOWN", "missing_required"
         reasons.append(f"required signal(s) unavailable: {missing_required} -- cannot assert engageability (absence != safe)")
-    elif confidence < MIN_CONFIDENCE or overall is None:
-        verdict = "UNKNOWN"
+    elif overall is None:
+        verdict, rule = "UNKNOWN", "no_signal"
+        reasons.append("no signal produced a risk value; nothing to assert safety from")
+    elif confidence < MIN_CONFIDENCE:
+        verdict, rule = "UNKNOWN", "low_confidence"
         reasons.append(f"insufficient data (confidence {confidence:.2f} < {MIN_CONFIDENCE}); not asserting safety")
     elif overall < ENGAGE_MAX:
-        verdict = "ENGAGE"
+        verdict, rule = "ENGAGE", "ladder:engage"
     elif overall < CAUTION_MAX:
-        verdict = "CAUTION"
+        verdict, rule = "CAUTION", "ladder:caution"
     else:
-        verdict = "AVOID"
+        verdict, rule = "AVOID", "ladder:avoid"
 
     # A single elevated HARD signal blocks a clean ENGAGE — for a trust tool the
     # worst categorical signal matters more than the average (else many low repo
@@ -72,7 +96,7 @@ def aggregate(signals, required_dims=()):
     if verdict == "ENGAGE":
         hot = max((s.risk for s in avail if s.hard), default=0.0)
         if hot >= SINGLE_BLOCK_MIN:
-            verdict = "CAUTION"
+            verdict, rule = "CAUTION", "single_block"
             reasons.append(f"downgraded to CAUTION: a single categorical signal at risk {hot:.2f} blocks a clean go")
 
     # Surface the top contributing risks for explainability.
@@ -84,4 +108,4 @@ def aggregate(signals, required_dims=()):
     for s in blind:
         reasons.append(f"blind spot — {s.name}: {s.detail}")
 
-    return Verdict(verdict, overall, confidence, reasons, signals)
+    return Verdict(verdict, overall, confidence, reasons, signals, rule)

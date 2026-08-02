@@ -68,11 +68,24 @@ KNOWN_UNEXERCISED = {
     ),
 }
 
-# What the two entries above amount to, said once: every verdict this benchmark
-# scores is produced by a CATEGORICAL rule -- a dimension veto, the single-block
-# downgrade, or a required-dimension miss. Not one is produced by the continuous
-# risk ladder. The weighted score is the part of the tool that most looks like
-# judgement, and it is the part with no evidence behind it.
+# WRONG, and corrected 2026-08-03 -- kept because the error is instructive:
+#
+#   "What the two entries above amount to, said once: every verdict this benchmark
+#    scores is produced by a CATEGORICAL rule -- a dimension veto, the single-block
+#    downgrade, or a required-dimension miss. Not one is produced by the continuous
+#    risk ladder."
+#
+# Six of fifteen rows ARE produced by the ladder (`ladder:engage`); Verdict.rule now
+# says so directly. What is true is narrower: no row is decided by a ladder BOUNDARY
+# comparison. Every ENGAGE sits at risk <= 0.098 against a boundary at 0.30, so the
+# constant can move freely and nothing follows -- which is what this file measures
+# and reports correctly. The false step was mine, at the write-up: "no row is
+# sensitive to the threshold" became "the ladder never runs", and a sensitivity
+# sweep cannot tell those apart. See bench/test_rule_coverage.py, which can.
+#
+# What survives of the original point, and it is the sharp part: the weighted score
+# is the piece of this tool that most looks like judgement, and every verdict it has
+# ever produced sits far from the two boundaries that give it meaning.
 
 
 def _verdict_vector():
