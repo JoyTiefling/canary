@@ -387,6 +387,8 @@ class _GHUnreachable:
     """Minimal stub: repo fetch fails, rate limit is fine (so it's not a limit error)."""
     def repo(self, owner, repo):
         return None
+    def repo_ex(self, owner, repo):
+        return None, 404
     def remaining(self):
         return 42
 
@@ -401,7 +403,10 @@ def test_unreachable_repo_is_unknown_with_honest_confidence():
     # single signal we happened to build.
     assert v.confidence < 0.35, v.confidence
     # The risk flag itself is not lost — it stays visible in the reasons.
-    assert any("not reachable" in r for r in v.reasons), v.reasons
+    # Wording changed 2026-08-04: for an ANSWERED absence the reason now says
+    # "not visible via API (HTTP 404)" instead of "not reachable". Deliberate — we
+    # WERE reached, GitHub answered, and only the unanswered case is unreachable.
+    assert any("not visible" in r and "404" in r for r in v.reasons), v.reasons
 
 
 def test_releases_without_repo_metadata_is_unavailable():
@@ -557,6 +562,8 @@ class _GHRepo:
         self._repo = repo_payload
     def repo(self, owner, repo):
         return dict(self._repo)
+    def repo_ex(self, owner, repo):
+        return dict(self._repo), 200
     def user(self, login):
         return {"login": login, "created_at": "2010-01-01T00:00:00Z"}
     def events(self, login):
@@ -659,3 +666,51 @@ if __name__ == "__main__":
               f"declares {declared} -- the runner is measuring less than it claims.")
         ok = False
     sys.exit(0 if ok else 1)
+
+
+# --- silence is not a datum about the repo (live run, 2026-08-04) -------------
+# Six live scans; two of the six repos came back "not reachable via API
+# (deleted/private/renamed?)" — and the GitHub search API had listed both of them
+# seconds earlier. Three retries each: 200, 200, 200. The verdict was UNKNOWN, i.e.
+# the SAFE side, which is exactly why the path could survive untouched: a false
+# "this repo looks gone" produces no complaint from anyone, ever. The reason string
+# was the lie, not the verdict — it named a cause (deleted/private/renamed) that the
+# code had explicitly refused to assert internally.
+
+class _GHNoAnswer:
+    """A client that never gets an answer: no HTTP status at all (timeout/DNS/reset)."""
+    def repo(self, owner, repo):
+        return None
+    def repo_ex(self, owner, repo):
+        return None, None
+    def remaining(self):
+        return 42  # not a rate limit — the silence is a network one
+
+
+def test_no_answer_is_an_error_not_an_unknown_verdict():
+    """Mutant: make scan() treat `status is None` like an answered 404 (drop the
+    branch) and this goes red — a verdict object comes back where an error belongs."""
+    from canary.scan import scan
+    v, err = scan("someowner/live-but-unreachable", gh=_GHNoAnswer())
+    assert v is None, f"a verdict was produced from silence: {v and v.verdict}"
+    assert err and "no answer" in err, err
+
+
+def test_no_answer_never_accuses_the_repo():
+    """The specific regression: the old text told the reader the repo was
+    deleted/private/renamed when we simply never got through."""
+    from canary.scan import scan
+    _, err = scan("someowner/live-but-unreachable", gh=_GHNoAnswer())
+    low = (err or "").lower()
+    for word in ("deleted", "private", "renamed"):
+        assert word not in low, f"silence still accuses the repo of being {word}: {err}"
+
+
+def test_answered_absence_still_yields_unknown_and_names_the_status():
+    """The other side of the split must NOT be weakened by the fix: a real 404 is a
+    real datum and still produces UNKNOWN with honest confidence."""
+    from canary.scan import scan
+    v, err = scan("someowner/vanished", gh=_GHUnreachable())
+    assert err is None and v.verdict == "UNKNOWN", (err, v and v.verdict)
+    assert v.confidence < 0.35, v.confidence
+    assert any("404" in r for r in v.reasons), v.reasons

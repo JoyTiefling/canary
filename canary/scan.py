@@ -5,13 +5,18 @@ from .github import GitHub, parse_target, age_days
 from .score import aggregate, Verdict
 
 
-def _unreachable_signals():
-    """Signal set for a repo we could not fetch: the 'repo not reachable' flag plus
-    every repo-level signal built from empty data (all self-report unavailable). Their
-    weight stays in the denominator, so `confidence` reports what we actually covered."""
+def _unreachable_signals(status=None):
+    """Signal set for a repo GitHub ANSWERED "not visible" about: the flag plus every
+    repo-level signal built from empty data (all self-report unavailable). Their weight
+    stays in the denominator, so `confidence` reports what we actually covered.
+
+    `status` is the HTTP code we were answered with and it goes into the detail text.
+    Before 2026-08-04 this branch also swallowed the case where we got NO answer, and
+    told the reader "deleted/private/renamed?" about a repo that was merely behind a
+    timeout — a specific accusation built from silence."""
+    seen = f"repo not visible via API (HTTP {status})" if status else "repo not reachable via API"
     return [
-        S.SignalResult("repo_exists", "authenticity", True, 0.6, 1.0,
-                       "repo not reachable via API (deleted/private/renamed?)"),
+        S.SignalResult("repo_exists", "authenticity", True, 0.6, 1.0, seen),
         S.sig_owner_age(None, None),
         S.sig_releases({}, None),
         S.sig_fast_growth({}),
@@ -30,12 +35,25 @@ def scan(url, gh=None):
         return None, "could not parse target (use a github repo/issue URL or owner/repo[#n])"
 
     owner, repo = t["owner"], t["repo"]
-    rd = gh.repo(owner, repo)
+    rd, status = gh.repo_ex(owner, repo)
     if rd is None:
         # Distinguish rate-limit from a genuinely missing repo — don't let an
         # exhausted limit masquerade as "repo not reachable".
         if gh.remaining() == 0:
             return None, "GitHub API rate limit exhausted -- set GITHUB_TOKEN or wait for reset"
+        # No answer at all (DNS, timeout, reset) is not a datum about the repo. It
+        # used to fall through to the branch below and be reported as "not reachable
+        # (deleted/private/renamed?)" — a verdict that LOOKS like prudence, so nobody
+        # ever complains about it, while a perfectly live repo gets dropped by the
+        # reader. Found 2026-08-04 by running six live scans: two repos the search API
+        # had listed seconds earlier came back "unreachable", and three retries each
+        # resolved them 200. The refusal capture.py already applies to fixtures
+        # ("absence of data is not data") belongs on the live path too, where the
+        # consumer is a person rather than the benchmark.
+        if status is None:
+            return None, (f"no answer from GitHub about {owner}/{repo} "
+                          "(network/timeout/reset) — not a verdict; we never asked "
+                          "successfully, and silence is not evidence about the repo")
         # Repo not found: deleted/private/renamed. A vanished repo is itself a risk
         # flag (honeypots get taken down), but we don't *know* — flag, don't assert.
         # The flag must be weighed against everything we FAILED to see, otherwise
@@ -43,7 +61,7 @@ def scan(url, gh=None):
         # back 1.00 — a definitive-looking verdict on one ambiguous datum. Rebuild the
         # full repo-level set from empty data (each signal self-reports unavailable,
         # so the weights stay defined in one place) and let coverage speak.
-        v = aggregate(_unreachable_signals())
+        v = aggregate(_unreachable_signals(status))
         return v, None
 
     sigs = []

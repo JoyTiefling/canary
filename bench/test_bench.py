@@ -177,7 +177,6 @@ def test_cassette_covers_the_client_surface():
     # instead of chasing each new method.
     api = {m for m in dir(github.GitHub)
            if not m.startswith("_") and callable(getattr(github.GitHub, m))}
-    api -= {"repo_ex"}  # capture-only: asks the REAL client why a lookup came back empty
     missing = sorted(m for m in api if not hasattr(Cassette(), m))
     assert not missing, f"Cassette lags GitHub client: {missing}"
 
@@ -246,3 +245,18 @@ if __name__ == "__main__":
             print(f"ERROR {fn.__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
     sys.exit(0 if passed == len(fns) else 1)
+
+
+def test_replay_status_rests_on_capture_refusal():
+    """Cassette.repo_ex derives 404 for an empty repo key in replay. That is only
+    honest because capture_one refuses to write a fixture for a target it got no
+    answer about — so an empty key on disk always means "GitHub answered, not
+    visible". This test pins the invariant the derivation leans on; if capture ever
+    starts recording unanswered lookups, the derived 404 becomes a fabricated fact
+    and this goes red first."""
+    st, info, wrote = _capture_to_tmp("o/silent", None)
+    assert not wrote and st != "ok", (st, info, wrote)
+    cas = Cassette(store={})            # replay, nothing recorded
+    assert cas.repo_ex("o", "r") == (None, 404)
+    cas2 = Cassette(store={"repo:o/r": {"full_name": "o/r"}})
+    assert cas2.repo_ex("o", "r")[1] == 200

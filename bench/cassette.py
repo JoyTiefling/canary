@@ -27,6 +27,15 @@ class Cassette:
     def repo(self, o, n):
         return self._io(f"repo:{o}/{n}", lambda: self.real.repo(o, n))
 
+    def repo_ex(self, o, n):
+        """(data, status). In capture mode this is the real client's answer. In REPLAY
+        the status is derived, and that is sound only because of an invariant enforced
+        next door: capture.py refuses to write a fixture for a target it got no answer
+        about. So a recorded-but-empty repo key means "GitHub answered, not visible" —
+        404 is the recorded truth, not a guess. See test_replay_status_rests_on_capture_refusal."""
+        d = self.repo(o, n)
+        return d, (200 if d else 404)
+
     def user(self, login):
         return self._io(f"user:{login}", lambda: self.real.user(login))
 
