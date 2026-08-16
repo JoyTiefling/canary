@@ -3,7 +3,7 @@
   "name": "io.github.JoyTiefling/canary",
   "title": "Canary",
   "description": "Trust verdict for a GitHub repo or bounty before you (or your agent) engage",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "websiteUrl": "https://github.com/JoyTiefling/canary",
   "repository": {
     "url": "https://github.com/JoyTiefling/canary",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "canary-trust",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "transport": {
         "type": "stdio"
       }

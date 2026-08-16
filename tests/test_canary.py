@@ -739,3 +739,28 @@ def test_answered_absence_still_yields_unknown_and_names_the_status():
     assert err is None and v.verdict == "UNKNOWN", (err, v and v.verdict)
     assert v.confidence < 0.35, v.confidence
     assert any("404" in r for r in v.reasons), v.reasons
+
+
+def test_server_json_version_matches_package_version():
+    """server.json carries a COPY of the version. A copy that lives apart from the
+    fact it copies rots by construction: on 2026-07-24 the roadmap recorded the
+    0.1.0 -> 0.1.2 sync as done, the sync commit landed on an unmerged branch, and
+    main advertised 0.1.0 to the MCP registry for three weeks while the package
+    said 0.1.2. Nobody notices a stale copy by reading it. This is the device that
+    fails instead.
+    """
+    import json
+    from pathlib import Path
+    import canary
+
+    data = json.loads((Path(__file__).parent.parent / "server.json").read_text(encoding="utf-8"))
+    copies = {"top-level": data["version"]}
+    for i, pkg in enumerate(data.get("packages", [])):
+        if "version" in pkg:
+            copies[f"packages[{i}]"] = pkg["version"]
+
+    assert copies, "server.json carries no version at all — the check would pass vacuously"
+    stale = {where: v for where, v in copies.items() if v != canary.__version__}
+    assert not stale, (
+        f"server.json out of sync with canary.__version__={canary.__version__}: {stale}"
+    )
