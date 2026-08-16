@@ -9,3 +9,4 @@ venv/
 
 # Agent config / memory — private (see DESIGN.md §Anonymity, P-32).
 .claude/
+dist/
