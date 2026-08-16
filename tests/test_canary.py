@@ -159,6 +159,31 @@ def test_mcp_tool_advertises_output_schema():
         assert field in props, f"outputSchema missing field: {field}"
 
 
+def test_mcp_docstring_has_anti_triggers_and_cost():
+    # Regression guard (F-01 + F-02, Glama TDQS self-audit 2026-07-24):
+    # the `canary_check` docstring must keep its anti-triggers block and its
+    # cost hint. Both close weak dimensions in the TDQS rubric ("Usage
+    # Guidelines" and "Contextual Completeness") and drive Grade B→A. A future
+    # rewrite that silently drops either section should fail this test.
+    from canary.mcp_server import canary_check
+    doc = canary_check.__doc__ or ""
+    # F-01 — anti-triggers block. Match the header and at least one of the
+    # negative cases (any wording that survives paraphrase — "private", "not a
+    # GitHub", "cache", "pre-engagement" — so the test doesn't lock us into
+    # exact strings).
+    assert "Do NOT" in doc, "F-01: anti-triggers block missing ('Do NOT call when:')"
+    neg_cases = ("private", "not a GitHub", "cache", "pre-engagement")
+    assert any(c in doc for c in neg_cases), (
+        f"F-01: anti-triggers block present but empty; expected at least one of {neg_cases}"
+    )
+    # F-02 — cost/cache hint. Look for a cost token and a time token.
+    doc_low = doc.lower()
+    assert "cost" in doc_low, "F-02: cost hint missing (word 'cost')"
+    assert "api call" in doc_low or "wall-clock" in doc_low, (
+        "F-02: cost hint present but no concrete cost signal (API-call count or wall-clock)"
+    )
+
+
 def test_owner_flood_none_is_unavailable():
     # no data must never be scored as safe (0)
     assert sig_owner_bounty_flood(None).available is False
